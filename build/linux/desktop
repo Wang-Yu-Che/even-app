@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=A even-app application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/even-app %u
+Terminal=false
+Type=Application
+Icon=even-app
+Categories=Utility;
+StartupWMClass=even-app
+
+ 
