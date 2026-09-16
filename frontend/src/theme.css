@@ -1,0 +1,368 @@
+/*
+ * The Even Realities look, taken from `even-toolkit` rather than re-typed.
+ *
+ * The library ships its palette as plain CSS custom properties (--color-text,
+ * --color-surface, ...), which happens to be exactly the namespace Tailwind v4
+ * uses for colour utilities. Three things are needed to turn that into a
+ * working, switchable theme.
+ *
+ * 1. SOURCE SCAN
+ *    Tailwind resolves `bg-surface` / `text-text-dim` from the classes it can
+ *    find in the tree, and it skips node_modules by default. The @source rules
+ *    below put the component library back in scope — without them its own
+ *    classes compile to nothing and every component renders unstyled.
+ *
+ * 2. ALIASES
+ *    @theme cannot read a var of the same name, so each token is aliased
+ *    through --ev-* first. The alias is a var() reference, not a copy, so the
+ *    active theme still decides the value at runtime. That indirection is what
+ *    lets one dark override below change every utility at once.
+ *
+ * 3. THEME ATTRIBUTE
+ *    data-theme must sit on <html>. The aliases are declared on :root, where
+ *    nested var() references are substituted, so a theme attribute on some
+ *    inner element would resolve them to the light palette.
+ */
+@import "tailwindcss";
+@import "even-toolkit/web/theme-light.css";
+@import "even-toolkit/web/typography.css";
+@import "even-toolkit/web/utilities.css";
+
+@source "./**/*.{ts,tsx}";
+@source "../node_modules/even-toolkit/dist/web";
+
+@theme inline {
+  --color-bg: var(--ev-bg);
+  --color-surface: var(--ev-surface);
+  --color-surface-light: var(--ev-surface-light);
+  --color-surface-lighter: var(--ev-surface-lighter);
+  --color-border: var(--ev-border);
+  --color-border-light: var(--ev-border-light);
+  --color-text: var(--ev-text);
+  --color-text-dim: var(--ev-text-dim);
+  --color-text-muted: var(--ev-text-muted);
+  --color-text-highlight: var(--ev-text-highlight);
+  --color-accent: var(--ev-accent);
+  --color-accent-alpha: var(--ev-accent-alpha);
+  --color-accent-warning: var(--ev-accent-warning);
+  --color-positive: var(--ev-positive);
+  --color-positive-alpha: var(--ev-positive-alpha);
+  --color-negative: var(--ev-negative);
+  --color-negative-alpha: var(--ev-negative-alpha);
+  --color-overlay: var(--ev-overlay);
+  --color-input-bg: var(--ev-input-bg);
+}
+
+/* Light is the library's own palette, imported above; the aliases just point at
+   it. Nothing is restated, so a token update in even-toolkit lands here too. */
+:root {
+  --ev-bg: var(--color-bg);
+  --ev-surface: var(--color-surface);
+  --ev-surface-light: var(--color-surface-light);
+  --ev-surface-lighter: var(--color-surface-lighter);
+  --ev-border: var(--color-border);
+  --ev-border-light: var(--color-border-light);
+  --ev-text: var(--color-text);
+  --ev-text-dim: var(--color-text-dim);
+  --ev-text-muted: var(--color-text-muted);
+  --ev-text-highlight: var(--color-text-highlight);
+  --ev-accent: var(--color-accent);
+  --ev-accent-alpha: var(--color-accent-alpha);
+  --ev-accent-warning: var(--color-accent-warning);
+  --ev-positive: var(--color-positive);
+  --ev-positive-alpha: var(--color-positive-alpha);
+  --ev-negative: var(--color-negative);
+  --ev-negative-alpha: var(--color-negative-alpha);
+  --ev-overlay: var(--color-overlay);
+  --ev-input-bg: var(--color-input-bg);
+}
+
+/*
+ * Dark is the one palette that has to be restated. even-toolkit ships it as
+ * `theme-dark.css`, but that file targets :root, and CSS has no way to scope an
+ * @import to a selector — importing it would simply overwrite the light values
+ * for every user. The values below are that file verbatim, with one fix.
+ *
+ * THE FIX: the library's dark preset sets --color-accent to #FFFFFF and leaves
+ * --color-text-highlight at #FFFFFF too. Every `highlight` button is
+ * `bg-accent text-text-highlight`, so on dark it would render white on white —
+ * the primary action would be invisible. In dark, text-highlight has to be the
+ * page colour instead of white.
+ */
+:root[data-theme="dark"] {
+  --color-text: #f0ebe3;
+  --color-text-dim: #8a7f72;
+  --color-text-muted: #5c5347;
+  --color-text-highlight: #0c0a07;
+
+  --color-bg: #0c0a07;
+  --color-surface: #161310;
+  --color-surface-light: #201c17;
+  --color-surface-lighter: #2c2620;
+
+  --color-border: #28221a;
+  --color-border-light: #3a3228;
+
+  --color-accent: #ffffff;
+  --color-accent-alpha: rgba(255, 255, 255, 0.12);
+  --color-accent-warning: #fef991;
+
+  --color-positive: #26a69a;
+  --color-positive-alpha: rgba(38, 166, 154, 0.5);
+  --color-negative: #ef5350;
+  --color-negative-alpha: rgba(239, 83, 80, 0.15);
+
+  --color-overlay: rgba(0, 0, 0, 0.6);
+  --color-input-bg: rgba(255, 255, 255, 0.08);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+.display-adjustment-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 16px;
+  min-height: 150px;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--color-surface-light);
+}
+
+.display-adjustment-stage {
+  position: relative;
+  height: 116px;
+}
+
+.display-volume {
+  position: absolute;
+  inset: 18px 14% 20px;
+  border: 1px dashed var(--color-text-muted);
+  transform: skewY(12deg);
+}
+
+.display-volume.back { transform: translate(18px, -12px) skewY(-12deg); }
+.display-plane {
+  position: absolute;
+  left: 35%;
+  top: 28px;
+  width: 42%;
+  height: 66px;
+  border: 1px solid var(--color-text-dim);
+  background: rgba(254, 249, 145, 0.78);
+  transform: skewY(12deg);
+}
+
+.vertical-control {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-dim);
+}
+
+.vertical-control-icon { font-size: 18px; color: var(--color-text); }
+.vertical-control strong { min-width: 36px; text-align: center; font-size: 11px; font-weight: 500; }
+.vertical-control input[type="range"] {
+  width: 92px;
+  accent-color: var(--color-text);
+  transform: rotate(-90deg);
+  margin: 38px -18px;
+}
+
+.screen-position-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 112px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--color-surface-light);
+}
+
+.screen-height-control { width: 42px; }
+.screen-height-control input[type="range"] { width: 72px; margin: 28px -14px; }
+
+/* The window has a hidden inset title bar, so the shell's top strip is the
+   window's drag handle. Interactive children opt back out. */
+.window-drag {
+  --wails-draggable: drag;
+}
+.window-nodrag,
+.window-drag button,
+.window-drag input,
+.window-drag textarea {
+  --wails-draggable: no-drag;
+}
+
+/* Room for the macOS traffic lights, which float over the top-left corner. */
+.titlebar-inset {
+  padding-left: 78px;
+}
+
+/* The preview follows the official simulator's framebuffer contract: a
+   576×288 transparent canvas where alpha-lit pixels appear G2 green. The black
+   desktop background stands in for the real-world view behind unlit pixels. */
+.lens-simulator-shell {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: #080b09;
+  box-shadow: inset 0 0 0 1px rgba(60, 250, 68, 0.04), 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.lens-simulator-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(60, 250, 68, 0.12);
+  color: rgba(155, 255, 159, 0.56);
+  font: 500 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+}
+
+.lens-simulator-toolbar i {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #3cfa44;
+  box-shadow: 0 0 6px rgba(60, 250, 68, 0.9);
+}
+
+.lens-display {
+  position: relative;
+  container-type: inline-size;
+  width: 100%;
+  aspect-ratio: 2 / 1;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(35, 82, 38, 0.15), transparent 68%),
+    #010302;
+  color: #3cfa44;
+  text-shadow: 0 0 3px rgba(60, 250, 68, 0.5);
+}
+
+.lens-display::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, 0.13) 3px);
+}
+
+.lens-text-container {
+  position: absolute;
+  left: 3.4722%;
+  top: 4.8611%;
+  width: 93.0556%;
+  height: 90.2778%;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 2.0833%;
+  border: 1px solid rgba(60, 250, 68, 0.55);
+  border-radius: 6px;
+  font-family: system-ui, "PingFang SC", sans-serif;
+  font-size: 3.125cqi;
+  line-height: 4.6875cqi;
+  white-space: pre-wrap;
+}
+
+.lens-status-icon {
+  position: absolute;
+  left: 89.5833%;
+  top: 9.7222%;
+  width: 3.4722%;
+  aspect-ratio: 1;
+  z-index: 1;
+}
+
+.lens-loading-grid {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+}
+
+.lens-loading-grid i {
+  background: #3cfa44;
+  animation: lens-pixel-sweep 1.5s steps(1) infinite;
+}
+
+@keyframes lens-pixel-sweep {
+  0%, 100% { opacity: 0.08; }
+  18%, 58% { opacity: 1; box-shadow: 0 0 3px rgba(60, 250, 68, 0.8); }
+  76% { opacity: 0.08; }
+}
+
+.lens-pause {
+  display: flex;
+  justify-content: center;
+  gap: 25%;
+  width: 100%;
+  height: 100%;
+  padding-block: 12%;
+}
+
+.lens-pause i { width: 22%; background: #3cfa44; }
+
+.lens-check,
+.lens-alert {
+  position: absolute;
+  inset: 0;
+}
+
+.lens-check::before,
+.lens-check::after {
+  position: absolute;
+  height: 8%;
+  background: #3cfa44;
+  content: "";
+  transform-origin: left center;
+}
+
+.lens-check::before { left: 18%; top: 55%; width: 35%; transform: rotate(45deg); }
+.lens-check::after { left: 43%; top: 72%; width: 58%; transform: rotate(-50deg); }
+
+.lens-alert {
+  box-sizing: border-box;
+  border: max(1px, 0.3472cqi) solid #3cfa44;
+}
+
+.lens-alert::before,
+.lens-alert::after {
+  position: absolute;
+  left: 46%;
+  width: 8%;
+  background: #3cfa44;
+  content: "";
+}
+
+.lens-alert::before { top: 18%; height: 38%; }
+.lens-alert::after { top: 68%; height: 8%; }
+
+.lens-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(60, 250, 68, 0.28);
+  font: 500 2.4cqi/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.12em;
+}

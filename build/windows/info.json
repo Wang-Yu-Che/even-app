@@ -5,11 +5,11 @@
 	"info": {
 		"0000": {
 			"ProductVersion": "0.1.0",
-			"CompanyName": "My Company",
-			"FileDescription": "A even-app application",
-			"LegalCopyright": "© 2026, My Company",
-			"ProductName": "My Product",
-			"Comments": "This is a comment"
+			"CompanyName": "Wang Yu Che",
+			"FileDescription": "Even Realities G2 control and Codex status companion",
+			"LegalCopyright": "© 2026 Wang Yu Che",
+			"ProductName": "Even Control",
+			"Comments": "Even Control for macOS"
 		}
 	}
 }

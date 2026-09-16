@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
-Name=My Product
-Comment=A even-app application
+Name=Even Control
+Comment=Even Realities G2 control and Codex status companion
 # The Exec line includes %u to pass the URL to the application
 Exec=/usr/local/bin/even-app %u
 Terminal=false
