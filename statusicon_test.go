@@ -54,8 +54,12 @@ func bmpValue(t *testing.T, bmp []byte, x, y int) uint8 {
 	if len(bmp) != bmpHeaderBytes+bmpRowStride*statusIconSize {
 		t.Fatalf("unexpected bitmap size %d", len(bmp))
 	}
+	return bmpValueSized(bmp, x, y, statusIconSize, bmpRowStride)
+}
+
+func bmpValueSized(bmp []byte, x, y, height, stride int) uint8 {
 	// BMP rows run bottom-up, and each byte holds two pixels, high nibble first.
-	offset := bmpHeaderBytes + (statusIconSize-1-y)*bmpRowStride + x/2
+	offset := bmpHeaderBytes + (height-1-y)*stride + x/2
 	if x%2 == 0 {
 		return bmp[offset] >> 4
 	}
@@ -183,7 +187,7 @@ func TestLoadingSweepIsOneCycle(t *testing.T) {
 // TestStillStatesRenderOneFrame guards the other half of the design: a state the
 // user reads at a glance costs exactly one bitmap, and it does not move.
 func TestStillStatesRenderOneFrame(t *testing.T) {
-	for _, state := range []string{"done", "idle", "needs_input", "permission", "error", "failed"} {
+	for _, state := range []string{"done", "idle", "needs_input", "permission", "paused", "error", "failed"} {
 		if isWorkingState(state) {
 			t.Fatalf("%s should hold still", state)
 		}
@@ -230,6 +234,7 @@ func TestActivityIconUsesOfficialActionMetaphors(t *testing.T) {
 		{"tool", "Bash", "go test ./...", "checklist"},
 		{"tool", "Bash", "go build ./...", "play"},
 		{"permission", "Bash", "deploy", "pause"},
+		{"paused", "", "", "pause"},
 		{"done", "", "", "complete"},
 		{"failed", "Bash", "go test ./...", "alert"},
 	}
@@ -253,11 +258,11 @@ func TestOfficialActionIconsRenderDifferentBitmaps(t *testing.T) {
 }
 
 // TestStatusIconGeometryIsStable pins the numbers both the layout and the frame
-// cost are derived from: a 20px icon is four cells of 5px, and one frame is 358
+// cost are derived from: a 24px icon is four cells of 6px, while still fitting
 // bytes, which is what decides how many frames the link can carry.
 func TestStatusIconGeometryIsStable(t *testing.T) {
-	if cell := statusIconSize / loadingGrid; cell != 5 {
-		t.Fatalf("cell is %dpx, want 5", cell)
+	if cell := statusIconSize / loadingGrid; cell != 6 {
+		t.Fatalf("cell is %dpx, want 6", cell)
 	}
 	icon := statusIcon("thinking", 0)
 	if icon.ID != statusIconID || icon.Name != statusIconName ||
@@ -269,7 +274,7 @@ func TestStatusIconGeometryIsStable(t *testing.T) {
 	}
 }
 
-func TestCompletionIconIsLargeAndCentered(t *testing.T) {
+func TestCompletionIconIsInsideCardAndVerticallyCentered(t *testing.T) {
 	icon := statusIcon("done", 0)
 	if icon.Width != completionIconSize || icon.Height != completionIconSize {
 		t.Fatalf("completion icon size = %dx%d, want %dx%d", icon.Width, icon.Height, completionIconSize, completionIconSize)
@@ -277,8 +282,29 @@ func TestCompletionIconIsLargeAndCentered(t *testing.T) {
 	if icon.X != completionIconX || icon.Y != completionIconY {
 		t.Fatalf("completion icon position = (%d,%d), want (%d,%d)", icon.X, icon.Y, completionIconX, completionIconY)
 	}
-	if icon.X*2+icon.Width != 576 {
-		t.Fatalf("completion icon is not horizontally centered: %+v", icon)
+	if icon.X <= completionCardX || icon.X+icon.Width >= completionCardX+completionCardWidth {
+		t.Fatalf("completion icon is outside card horizontally: %+v", icon)
+	}
+	if icon.Y <= completionCardY || icon.Y+icon.Height >= completionCardY+completionCardHeight {
+		t.Fatalf("completion icon is outside card vertically: %+v", icon)
+	}
+	if icon.Y*2+icon.Height != completionCardY*2+completionCardHeight {
+		t.Fatalf("completion icon is not vertically centered in card: %+v", icon)
+	}
+}
+
+func TestCompletionIconIsAPlainCheckmark(t *testing.T) {
+	icon := statusIcon("done", 0)
+	stride := ((icon.Width+1)/2 + 3) &^ 3
+	for _, point := range [][2]int{{9, 25}, {18, 34}, {39, 12}} {
+		if pixel := bmpValueSized(icon.BMP, point[0], point[1], icon.Height, stride); pixel == 0 {
+			t.Fatalf("completion icon pixel (%d,%d) is off", point[0], point[1])
+		}
+	}
+	for _, point := range [][2]int{{4, 8}, {42, 8}, {4, 39}, {42, 39}} {
+		if pixel := bmpValueSized(icon.BMP, point[0], point[1], icon.Height, stride); pixel != 0 {
+			t.Fatalf("completion icon retained a frame pixel at (%d,%d)", point[0], point[1])
+		}
 	}
 }
 

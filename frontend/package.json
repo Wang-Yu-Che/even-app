@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@evenrealities/even_hub_sdk": "^0.0.15",
+    "@evenrealities/pretext": "^0.1.4",
     "@wailsio/runtime": "latest",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -19,6 +21,8 @@
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
+    "@evenrealities/evenhub-simulator": "^0.9.5",
+    "@evenrealities/sim-darwin-arm64": "^0.9.5",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { getTextWidth } from '@evenrealities/pretext'
 /*
  * Components come in through their own subpaths rather than the
  * `even-toolkit/web` barrel. The barrel re-exports all 55 components, and two of
@@ -75,7 +76,7 @@ const initialStatus: DeviceStatus = {
 // empty icon. Listing the working states positively here would drift the moment
 // an adapter invented a new one, and the preview would sit still while the lens
 // was sweeping.
-const stillStates = new Set(['needs_input', 'permission', 'done', 'idle', 'error', 'failed'])
+const stillStates = new Set(['needs_input', 'permission', 'paused', 'done', 'idle', 'error', 'failed'])
 
 const capabilityLabels: Record<keyof DeviceStatus['capabilities'], string> = {
   text: '文本',
@@ -97,31 +98,140 @@ const isWorkingState = (state: string) => state !== '' && !stillStates.has(state
 
 type Notice = { text: string; error: boolean }
 
-function LensStatusIcon({ state }: { state: string }) {
-  if (isWorkingState(state)) {
-    return <span className="lens-loading-grid">{Array.from({ length: 16 }, (_, index) => <i key={index} style={{ animationDelay: `${index * 90}ms` }} />)}</span>
+type PreviewPage = {
+  list?: { items: string[]; itemWidth: number; selectBorder: boolean }
+  text: string
+  style: {
+    X: number; Y: number; Width: number; Height: number
+    BorderWidth: number; BorderColor: number; BorderRadius: number; PaddingLength: number
   }
-  if (state === 'needs_input' || state === 'permission') return <span className="lens-pause"><i /><i /></span>
-  if (state === 'error' || state === 'failed') return <span className="lens-alert"><i /></span>
-  return <span className="lens-check" />
+  icon: { X: number; Y: number; Width: number; Height: number; BMP: string } | null
 }
 
-function LensPreview({ rows, state }: { rows: string[]; state: string }) {
+const previewColour = (level: number) => `rgba(155, 255, 159, ${Math.max(0, Math.min(15, level)) / 15})`
+
+function drawLensText(context: CanvasRenderingContext2D, text: string, x: number, y: number) {
+  let cursor = x
+  for (const character of text) {
+    context.fillText(character, cursor, y)
+    cursor += getTextWidth(character)
+  }
+}
+
+async function drawPreview(canvas: HTMLCanvasElement, page: PreviewPage) {
+  const context = canvas.getContext('2d')
+  if (!context) return
+  context.clearRect(0, 0, canvas.width, canvas.height)
+  context.fillStyle = '#000'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+
+  const style = page.style
+  if (style.BorderWidth > 0) {
+    context.strokeStyle = previewColour(style.BorderColor)
+    context.lineWidth = style.BorderWidth
+    context.beginPath()
+    context.roundRect(
+      style.X + style.BorderWidth / 2,
+      style.Y + style.BorderWidth / 2,
+      style.Width - style.BorderWidth,
+      style.Height - style.BorderWidth,
+      style.BorderRadius,
+    )
+    context.stroke()
+  }
+  if (page.list) {
+	const inset = style.BorderWidth + style.PaddingLength
+	const itemX = style.X + inset
+	const itemY = style.Y + inset
+    context.save()
+    context.beginPath()
+    context.rect(style.X, style.Y, style.Width, style.Height)
+    context.clip()
+    context.font = '20px "PingFang SC", "SF Pro Text", sans-serif'
+    context.textBaseline = 'middle'
+    // Firmware owns row layout and scrolling; Canvas approximates the initial list.
+    page.list.items.forEach((label, index) => {
+      const y = itemY + index * 40
+      if (index === 0 && page.list!.selectBorder) {
+        context.strokeStyle = previewColour(15)
+        context.lineWidth = 1
+		context.beginPath()
+		context.roundRect(itemX + 1, y + 1, page.list!.itemWidth - 2, 38, 6)
+		context.stroke()
+      }
+      context.fillStyle = previewColour(15)
+		drawLensText(context, label, itemX + 12, y + 20)
+    })
+    context.restore()
+    return
+  }
+
+  const inset = style.BorderWidth + style.PaddingLength
+  context.save()
+  context.beginPath()
+  context.rect(style.X + inset, style.Y + inset, style.Width - inset * 2, style.Height - inset * 2)
+  context.clip()
+  context.fillStyle = previewColour(15)
+  context.font = '20px "PingFang SC", "SF Pro Text", sans-serif'
+  context.textBaseline = 'top'
+  page.text.split('\n').forEach((line, index) => {
+	drawLensText(context, line, style.X + inset, style.Y + inset + index * 27)
+  })
+  context.restore()
+
+  if (page.icon?.BMP) {
+    const image = new Image()
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve()
+      image.onerror = () => reject(new Error('无法解码状态图标'))
+      image.src = `data:image/bmp;base64,${page.icon!.BMP}`
+    })
+    context.drawImage(image, page.icon.X, page.icon.Y, page.icon.Width, page.icon.Height)
+  }
+}
+
+function LensPreview() {
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const [error, setError] = useState('')
+  const [nativeError, setNativeError] = useState('')
+  useEffect(() => {
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout>
+    async function refresh() {
+      try {
+        const page = JSON.parse(await EvenService.PreviewPage()) as PreviewPage
+        if (stopped) return
+        if (canvas.current) await drawPreview(canvas.current, page)
+        setError('')
+      } catch (error) {
+        if (stopped) return
+        setError(String(error))
+      }
+      if (!stopped) timer = setTimeout(refresh, 250)
+    }
+    void refresh()
+    return () => { stopped = true; clearTimeout(timer) }
+  }, [])
+  const openNativeSimulator = async () => {
+    setNativeError('')
+    try {
+      await EvenService.StartNativeSimulator()
+    } catch (error) {
+      setNativeError(String(error))
+    }
+  }
   return (
     <div className="lens-simulator-shell">
       <div className="lens-simulator-toolbar">
-        <span><i /> G2 DISPLAY</span>
-        <span>576 × 288 · 4-bit</span>
+        <span><i /> 内置 G2 PREVIEW</span>
+        <span className="lens-simulator-actions">
+          <span>576 × 288 · 4-bit</span>
+          <button type="button" onClick={() => void openNativeSimulator()}>打开原生模拟器</button>
+        </span>
       </div>
-      <div className="lens-display" role="img" aria-label="Even G2 眼镜画面模拟">
-        {rows.length > 0 ? (
-          <>
-            <div className="lens-status-icon"><LensStatusIcon state={state} /></div>
-            <div className="lens-text-container">
-              {rows.map((line, index) => <div key={`${index}-${line}`}>{line || '·'}</div>)}
-            </div>
-          </>
-        ) : <div className="lens-empty">NO ACTIVE PAGE</div>}
+      <div className="lens-display">
+        <canvas ref={canvas} width={576} height={288} aria-label="内置眼镜画面预览" />
+        {(error || nativeError) && <div className="lens-empty">{error || nativeError}</div>}
       </div>
     </div>
   )
@@ -131,7 +241,7 @@ function App() {
   const [section, setSection] = useState<'overview' | 'display' | 'settings' | 'labs'>('overview')
   const [status, setStatus] = useState<DeviceStatus>(initialStatus)
   const [codex, setCodex] = useState<CodexStatus>({ available: false, message: '正在连接状态桥', state: '', rows: [] })
-  const [text, setText] = useState('Hello from Even Control')
+  const [text, setText] = useState('Hello from Even Glasses')
   const [list, setList] = useState('Today\nFocus mode\nTake a break')
   const [imageData, setImageData] = useState('')
   const [imageName, setImageName] = useState('')
@@ -256,13 +366,12 @@ function App() {
   const calibrate = () =>
     run(async () => {
       const result = await EvenService.LensCalibration()
-      if (result?.length) setCodex(previous => ({ ...previous, rows: result, message: '镜片校准列表已推送（读数见右侧预览）' }))
+      if (result?.length) setCodex(previous => ({ ...previous, rows: result, message: '镜片校准列表已推送（请在眼镜上查看读数）' }))
     }, '镜片校准列表已发送，请对照眼镜读数并反馈行宽 / 行数 / 符号')
 
   const rows = codex.rows ?? []
   const sweeping = isWorkingState(codex.state)
   const connectionLabel = status.connected ? '已连接' : status.connecting ? '正在连接' : '未连接'
-
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg">
       <div className="window-drag shrink-0">
@@ -276,7 +385,7 @@ function App() {
           left={
             <div className="titlebar-inset flex items-center gap-2">
               <IcStatusGlasses width={22} height={22} />
-              <span className="text-[17px] tracking-[-0.17px]">Even Control</span>
+              <span className="text-[17px] tracking-[-0.17px]">Even Glasses</span>
             </div>
           }
           right={
@@ -293,20 +402,32 @@ function App() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-		<div className="mx-auto w-full max-w-[1240px] px-4 pt-4">
-			<SegmentedControl
-				className="w-full"
-				options={[
-					{ value: 'overview', label: '概览' },
-					{ value: 'display', label: '显示' },
-					{ value: 'settings', label: '设备设置' },
-					{ value: 'labs', label: '实验与诊断' },
-				]}
-				value={section}
-				onValueChange={value => setSection(value as typeof section)}
-			/>
-		</div>
-        <div className="mx-auto grid w-full max-w-[1240px] grid-cols-1 items-start gap-4 px-4 pt-4 pb-8 lg:grid-cols-[280px_minmax(0,1fr)_340px]">
+        <div className="mx-auto w-full max-w-[1240px] px-4 pt-4">
+          <Card className="mx-auto w-[610px] max-w-full">
+            <SectionHeader
+              title="内置眼镜预览"
+              className="mt-0"
+              action={status.connected && sweeping ? <Loading size={20} /> : null}
+            />
+            <p className="mb-3 text-[11px] tracking-[-0.11px] text-text-muted">
+              {!status.connected ? '眼镜未连接' : rows.length ? (sweeping ? '状态图标正在更新' : `${rows.length} 行`) : '当前没有活动页面'}
+            </p>
+            <LensPreview />
+            <p className="mt-3 text-[11px] leading-relaxed text-text-muted">直接渲染发送给眼镜的文本、边框与 BMP 图标；无需启动外部模拟器，最终显示以真机为准。</p>
+          </Card>
+          <SegmentedControl
+            className="mt-4 w-full"
+            options={[
+              { value: 'overview', label: '概览' },
+              { value: 'display', label: '显示' },
+              { value: 'settings', label: '设备设置' },
+              { value: 'labs', label: '实验与诊断' },
+            ]}
+            value={section}
+            onValueChange={value => setSection(value as typeof section)}
+          />
+        </div>
+        <div className="mx-auto grid w-full max-w-[1240px] grid-cols-1 items-start gap-4 px-4 pt-4 pb-8 lg:grid-cols-[280px_minmax(0,1fr)]">
           <div className={`flex flex-col gap-4 ${section === 'settings' ? 'lg:col-span-2' : ''}`}>
             <Card className={section === 'overview' ? '' : 'hidden'}>
               <SectionHeader title="设备" className="mt-0" />
@@ -583,14 +704,6 @@ function App() {
             </Card>
           </div>
 
-          <Card className="lg:sticky lg:top-4">
-            <SectionHeader title="眼镜正在显示" className="mt-0" action={sweeping ? <Loading size={20} /> : null} />
-            <p className="mb-3 text-[11px] tracking-[-0.11px] text-text-muted">
-              {rows.length ? (sweeping ? '实时镜片画面 · 状态图标正在扫描' : `实时镜片画面 · ${rows.length} 行`) : '当前没有活动页面'}
-            </p>
-            <LensPreview rows={rows} state={codex.state} />
-            <p className="mt-3 text-[11px] leading-relaxed text-text-muted">按真实 576×288 坐标缩放；绿色像素代表镜片发光区域，黑色区域在实物中为透明视野。</p>
-          </Card>
         </div>
       </div>
 

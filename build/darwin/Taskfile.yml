@@ -6,6 +6,7 @@ includes:
 vars:
   # Docker image for cross-compilation (used when building on non-macOS)
   CROSS_IMAGE: wails-cross
+  APP_BUNDLE_NAME: "Even Glasses"
 
 tasks:
   build:
@@ -158,22 +159,23 @@ tasks:
   create:app:bundle:
     summary: Creates an `.app` bundle
     cmds:
-      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS"
-      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources"
-      - cp build/darwin/icons.icns "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources"
+      - mkdir -p "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.app/Contents/MacOS"
+      - mkdir -p "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.app/Contents/Resources"
+      - cp build/darwin/icons.icns "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.app/Contents/Resources"
       - |
         if [ -f build/darwin/Assets.car ]; then
-          cp build/darwin/Assets.car "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources"
+          cp build/darwin/Assets.car "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.app/Contents/Resources"
         fi
-      - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS"
-      - cp build/darwin/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents"
+      - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.app/Contents/MacOS"
+      - cp build/darwin/Info.plist "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.app/Contents"
+      - node scripts/copy-simulator.mjs "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.app/Contents/MacOS" "{{.ARCH | default ARCH}}"
       - task: '{{if eq OS "darwin"}}codesign:adhoc{{else}}codesign:skip{{end}}'
 
   codesign:adhoc:
     summary: Ad-hoc signs the app bundle (macOS only)
     internal: true
     cmds:
-      - codesign --force --deep --sign - "{{.BIN_DIR}}/{{.APP_NAME}}.app"
+      - codesign --force --deep --sign - "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.app"
 
   codesign:skip:
     summary: Skips codesigning when cross-compiling
@@ -183,17 +185,18 @@ tasks:
 
   run:
     cmds:
-      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/MacOS"
-      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/Resources"
-      - cp build/darwin/icons.icns "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/Resources"
+      - mkdir -p "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.dev.app/Contents/MacOS"
+      - mkdir -p "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.dev.app/Contents/Resources"
+      - cp build/darwin/icons.icns "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.dev.app/Contents/Resources"
       - |
         if [ -f build/darwin/Assets.car ]; then
-          cp build/darwin/Assets.car "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/Resources"
+          cp build/darwin/Assets.car "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.dev.app/Contents/Resources"
         fi
-      - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/MacOS"
-      - cp "build/darwin/Info.dev.plist" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/Info.plist"
-      - codesign --force --deep --sign - "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"
-      - '"{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/MacOS/{{.APP_NAME}}"'
+      - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.dev.app/Contents/MacOS"
+      - cp "build/darwin/Info.dev.plist" "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.dev.app/Contents/Info.plist"
+      - node scripts/copy-simulator.mjs "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.dev.app/Contents/MacOS" "{{.ARCH | default ARCH}}"
+      - codesign --force --deep --sign - "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.dev.app"
+      - '"{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.dev.app/Contents/MacOS/{{.APP_NAME}}"'
 
   sign:
     summary: Signs the application bundle with Developer ID
@@ -204,7 +207,7 @@ tasks:
     deps:
       - task: package
     cmds:
-      - wails3 tool sign --input "{{.BIN_DIR}}/{{.APP_NAME}}.app" {{.CLI_ARGS}}
+      - wails3 tool sign --input "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.app" {{.CLI_ARGS}}
 
   sign:notarize:
     summary: Signs and notarizes the application bundle
@@ -217,4 +220,4 @@ tasks:
     deps:
       - task: package
     cmds:
-      - wails3 tool sign --input "{{.BIN_DIR}}/{{.APP_NAME}}.app" --notarize {{.CLI_ARGS}}
+      - wails3 tool sign --input "{{.BIN_DIR}}/{{.APP_BUNDLE_NAME}}.app" --notarize {{.CLI_ARGS}}

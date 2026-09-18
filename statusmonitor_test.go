@@ -199,26 +199,33 @@ func TestStatusMonitorPublishesGlassesRows(t *testing.T) {
 	writeRecordValue(t, stateDir, "s1", record)
 
 	monitor := newStatusMonitor([]statusSource{source}, nil)
+	monitor.selected = "workbuddy:s1"
 	monitor.refresh()
 
 	rows := monitor.Rows()
 	if len(rows) < 4 {
 		t.Fatalf("rows = %v", rows)
 	}
-	if rows[0] != ">_ WorkBuddy · even-app" {
+	if rows[0] != sessionPrompt+"WorkBuddy · even-app" {
 		t.Fatalf("header = %q", rows[0])
 	}
-	if rows[1] != "▷ 把改动文件推给眼镜" {
+	if rows[1] != lens.User+"把改动文件推给眼镜" {
 		t.Fatalf("status row = %q", rows[1])
 	}
-	if !strings.HasPrefix(rows[2], "● RUNNING  ·  --:--") {
+	if !strings.HasPrefix(rows[2], lens.Header+"● 正在执行  ·  --:--") {
 		t.Fatalf("status row = %q", rows[2])
 	}
-	if rows[3] != lens.Live+"> go test ./..." {
-		t.Fatalf("current row = %q", rows[3])
+	if rows[3] != lens.Live+"正在运行命令 go test ./..." {
+		t.Fatalf("activity summary = %q", rows[3])
 	}
-	if !strings.HasPrefix(rows[5], lens.Step+"statusmonitor.go") || !strings.HasSuffix(rows[5], "■ M") {
-		t.Fatalf("recent row = %q", rows[5])
+	if rows[4] != lens.Header+"────────────────────" {
+		t.Fatalf("activity divider = %q", rows[3])
+	}
+	if !strings.HasPrefix(rows[5], lens.Step+"statusmonitor.go") || !strings.HasSuffix(rows[5], "● M") {
+		t.Fatalf("recent row = %q", rows[4])
+	}
+	if rows[len(rows)-1] != commandPrompt+"go test ./..." {
+		t.Fatalf("current command is not the last row: %v", rows)
 	}
 	if status := monitor.Status(); len(status.Rows) != len(rows) {
 		t.Fatalf("Status().Rows = %v, want the same list", status.Rows)
@@ -255,8 +262,9 @@ func TestStatusMonitorAdvancesTheElapsedClockEverySecond(t *testing.T) {
 	}
 	views := []view{}
 	monitor := newStatusMonitor([]statusSource{source}, nil)
+	monitor.selected = "codex:continuous"
 	monitor.now = func() time.Time { return now }
-	monitor.onView = func(rows []string, animate bool, _, _ string) {
+	monitor.onView = func(rows []string, animate bool, _, _ string, _ []string) {
 		views = append(views, view{rows: append([]string(nil), rows...), animate: animate})
 	}
 
@@ -349,5 +357,205 @@ func TestLiveSessionPreview(t *testing.T) {
 	t.Logf("session %s · state=%s · %d settled steps on disk", newest.SessionID, newest.State, len(steps))
 	for i, row := range rows {
 		t.Logf("  [%d] %s", i, row)
+	}
+}
+
+func TestSessionListNavigation(t *testing.T) {
+	dir := t.TempDir()
+	source := statusSource{Agent: "codex", Label: "Codex", Dir: dir}
+	now := time.Now()
+	for i := 0; i < 7; i++ {
+		writeRecord(t, dir, fmt.Sprintf("s%d", i), "thinking", now)
+	}
+	monitor := newStatusMonitor([]statusSource{source}, nil)
+	monitor.refresh()
+	monitor.selectListItem("project:even-app")
+	if monitor.Status().State != "sessions" || len(monitor.Rows()) != 7 {
+		t.Fatalf("list: %+v", monitor.Status())
+	}
+	monitor.selectListItem("codex:s5")
+	if monitor.selected != "codex:s5" || monitor.Status().State != "thinking" {
+		t.Fatalf("selection: %+v", monitor.Status())
+	}
+	writeRecord(t, dir, "s0", "permission", now.Add(time.Second))
+	monitor.refresh()
+	if monitor.selected != "codex:s5" || monitor.Status().State != "thinking" {
+		t.Fatal("other session stole detail")
+	}
+	monitor.handleInput(3)
+	if monitor.Status().State != "sessions" {
+		t.Fatal("back lost list focus")
+	}
+	monitor.selectListItem("codex:s5")
+	if err := os.Remove(filepath.Join(dir, "s5.json")); err != nil {
+		t.Fatal(err)
+	}
+	monitor.refresh()
+	if monitor.selected != "" || monitor.Status().State != "sessions" {
+		t.Fatal("missing selection did not return to list")
+	}
+}
+
+func TestClosedMenuRetainsSessionsAndReportsCompletion(t *testing.T) {
+	dir := t.TempDir()
+	source := statusSource{Agent: "codex", Label: "Codex", Dir: dir}
+	events := make(chan agentStateRecord, 8)
+	monitor := newStatusMonitor([]statusSource{source}, func(_ statusSource, record agentStateRecord) { events <- record })
+	monitor.dismissed = true
+	pushes := 0
+	monitor.onView = func(_ []string, _ bool, _, _ string, _ []string) { pushes++ }
+	writeRecord(t, dir, "old", "done", time.Now().Add(-2*staleAfter))
+	writeRecord(t, dir, "current", "thinking", time.Now())
+	monitor.refresh()
+	if len(monitor.sessions) != 2 || pushes != 0 || len(events) != 0 {
+		t.Fatal("startup must retain records without displaying or notifying")
+	}
+	writeRecord(t, dir, "current", "done", time.Now())
+	monitor.refresh()
+	if got := waitEvent(t, events); got.SessionID != "current" || got.State != "done" {
+		t.Fatalf("completion: %+v", got)
+	}
+	monitor.refresh()
+	if pushes != 0 || len(events) != 0 {
+		t.Fatal("closed menu pushed a page or repeated completion")
+	}
+	monitor.openSessionList()
+	monitor.selectListItem("project:even-app")
+	if pushes == 0 || len(monitor.Rows()) != 2 {
+		t.Fatal("menu did not expose retained sessions")
+	}
+}
+
+func TestMenuOpensSessionList(t *testing.T) {
+	dir := t.TempDir()
+	writeRecord(t, dir, "s1", "thinking", time.Now())
+	monitor := newStatusMonitor([]statusSource{{Agent: "codex", Label: "Codex", Dir: dir}}, nil)
+	var pushedState string
+	monitor.onView = func(_ []string, _ bool, state, _ string, _ []string) {
+		pushedState = state
+	}
+	monitor.refresh()
+	monitor.selectListItem("project:even-app")
+	monitor.selectListItem("codex:s1")
+	monitor.dismissDisplay()
+	monitor.listOffset = nativeListPageSize
+	monitor.openSessionList()
+	if monitor.displayDismissed() || monitor.selected != "" || monitor.project != "" || monitor.listOffset != 0 {
+		t.Fatal("menu did not reset navigation")
+	}
+	if monitor.Status().State != "projects" || len(monitor.Rows()) == 0 || pushedState != "projects" {
+		t.Fatalf("menu did not publish project list: %+v", monitor.Status())
+	}
+	pushedState = ""
+	monitor.openSessionList()
+	if pushedState != "projects" {
+		t.Fatal("reopening menu did not republish list")
+	}
+}
+
+func TestDisplayingSessionRequiresVisibleMatchingDetail(t *testing.T) {
+	source := statusSource{Agent: "codex"}
+	record := agentStateRecord{SessionID: "s1"}
+	monitor := newStatusMonitor(nil, nil)
+	monitor.selected = "codex:s1"
+	if !monitor.displayingSession(source, record) {
+		t.Fatal("visible selected session was not recognized")
+	}
+	monitor.dismissed = true
+	if monitor.displayingSession(source, record) {
+		t.Fatal("dismissed session was treated as visible")
+	}
+	monitor.dismissed = false
+	if monitor.displayingSession(source, agentStateRecord{SessionID: "s2"}) {
+		t.Fatal("different session was treated as visible")
+	}
+}
+
+func TestNativeSessionListPagingAndDismiss(t *testing.T) {
+	dir := t.TempDir()
+	source := statusSource{Agent: "codex", Label: "Codex", Dir: dir}
+	for i := 0; i < 25; i++ {
+		writeRecord(t, dir, fmt.Sprintf("s%02d", i), "thinking", time.Now())
+	}
+	monitor := newStatusMonitor([]statusSource{source}, nil)
+	var keys []string
+	monitor.onView = func(_ []string, _ bool, _, _ string, listKeys []string) { keys = listKeys }
+	monitor.refresh()
+	monitor.selectListItem("project:even-app")
+	if len(keys) != nativeListPageSize+1 || keys[nativeListPageSize] != "next" {
+		t.Fatalf("first page: %v", keys)
+	}
+	monitor.selectListItem(keys[nativeListPageSize])
+	if len(keys) != nativeListPageSize+2 || keys[0] != "previous" || keys[1] != "codex:s18" {
+		t.Fatalf("second page: %v", keys)
+	}
+	monitor.selectListItem(keys[1])
+	if monitor.selected != "codex:s18" {
+		t.Fatalf("selected %s", monitor.selected)
+	}
+	monitor.handleInput(3)
+	monitor.dismissDisplay()
+	writeRecord(t, dir, "new", "tool", time.Now())
+	monitor.refresh()
+	if len(monitor.Rows()) != 0 || !monitor.displayDismissed() {
+		t.Fatal("dismissed page reappeared")
+	}
+	monitor.resumeDisplay()
+	if len(monitor.Rows()) == 0 || monitor.displayDismissed() {
+		t.Fatal("resume failed")
+	}
+}
+
+func TestProjectFoldersAndSessionTitles(t *testing.T) {
+	dir := t.TempDir()
+	source := statusSource{Agent: "codex", Label: "Codex", Dir: dir}
+	now := time.Now()
+	for _, record := range []agentStateRecord{
+		{SessionID: "a", Project: "even-app", Title: "优化眼镜列表", ThreadName: "old-id", State: "thinking"},
+		{SessionID: "b", Project: "even-app", State: "done"},
+		{SessionID: "c", Project: "other", Title: "更新文档", State: "done"},
+	} {
+		record.Timestamp = float64(now.Unix())
+		writeRecordValue(t, dir, record.SessionID, record)
+	}
+	writeStream(t, dir, "b", []string{`{"kind":"prompt","text":"修复蓝牙连接问题"}`})
+	monitor := newStatusMonitor([]statusSource{source}, nil)
+	var keys []string
+	monitor.onView = func(_ []string, _ bool, _, _ string, next []string) { keys = next }
+	monitor.refresh()
+	if monitor.Status().State != "projects" || len(keys) != 2 || keys[0] != "project:even-app" {
+		t.Fatalf("projects: %v %v", monitor.Rows(), keys)
+	}
+	if !strings.HasPrefix(monitor.Rows()[0], "▶ even-app") || !strings.HasSuffix(monitor.Rows()[0], "●") || monitor.Rows()[1] != "▶ other" {
+		t.Fatalf("activity dots: %v", monitor.Rows())
+	}
+	monitor.selectListItem(keys[0])
+	if len(keys) != 2 || keys[0] != "codex:a" || keys[1] != "codex:b" {
+		t.Fatalf("project sessions: %v", keys)
+	}
+	if !strings.HasPrefix(monitor.Rows()[0], "优化眼镜列表") || !strings.HasPrefix(monitor.Rows()[1], "修复蓝牙连") {
+		t.Fatalf("titles: %v", monitor.Rows())
+	}
+	monitor.selectListItem(keys[0])
+	monitor.handleInput(3)
+	if monitor.Status().State != "sessions" || monitor.project != "even-app" {
+		t.Fatal("detail back did not keep project")
+	}
+	monitor.handleInput(3)
+	if monitor.Status().State != "projects" || monitor.project != "" {
+		t.Fatal("folder back did not reach projects")
+	}
+	record := readStateRecordForTest(t, dir, "a")
+	record.State = "done"
+	writeRecordValue(t, dir, "a", record)
+	monitor.refresh()
+	if strings.HasSuffix(monitor.Rows()[0], "●") {
+		t.Fatal("finished project still marked active")
+	}
+	record.State = "permission"
+	writeRecordValue(t, dir, "a", record)
+	monitor.refresh()
+	if !strings.HasSuffix(monitor.Rows()[0], "●") {
+		t.Fatal("waiting project not marked active")
 	}
 }

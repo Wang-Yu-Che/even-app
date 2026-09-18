@@ -5,9 +5,21 @@ import (
 	"encoding/base64"
 	"image"
 	"image/png"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestCompletionNotificationIncludesSession(t *testing.T) {
+	record := agentStateRecord{
+		SessionID: "session-1", State: "done", Title: "  修复菜单\n并整理样式  ", Project: "even-app",
+		StartedAt: 1699999958, Timestamp: 1700000000, StepCount: 5, FileCount: 2, Additions: 22, Deletions: 4,
+	}
+	notification := sessionCompletionNotification(statusSource{Agent: "codex", Label: "Codex"}, record)
+	if notification.ID != "codex:session-1" || notification.PackageName != codexMenuPackage || notification.Title != "修复菜单 并整理样式" || notification.Subtitle != "even-app · 已完成" || notification.Message != "用时 0:42 · 5 步\n2 个文件 · +22 / -4" || notification.Timestamp.Unix() != 1700000000 {
+		t.Fatalf("notification: %+v", notification)
+	}
+}
 
 func TestDisplayDurationDefaultsToFiveSeconds(t *testing.T) {
 	service := &EvenService{}
@@ -64,6 +76,16 @@ func TestCompletionDisplayStaysVisibleLongEnough(t *testing.T) {
 	}
 	if got := displayClearDelay(5*time.Second, "idle"); got != 5*time.Second {
 		t.Fatalf("idle delay = %s, want 5s", got)
+	}
+}
+
+func TestBlankAgentPageCoversTheLensWithoutDecoration(t *testing.T) {
+	style := blankAgentPageStyle()
+	if style.X != 0 || style.Y != 0 || style.Width != 576 || style.Height != 288 {
+		t.Fatalf("blank page geometry = %+v, want full 576x288 lens", style)
+	}
+	if style.BorderWidth != 0 || style.BorderColor != 0 || style.BorderRadius != 0 || style.PaddingLength != 0 {
+		t.Fatalf("blank page has visible decoration: %+v", style)
 	}
 }
 
@@ -145,5 +167,43 @@ func TestShouldRestartSweepKeepsARunningSweepAlone(t *testing.T) {
 				t.Fatalf("shouldRestartSweep() = %v, want %v", got, testCase.want)
 			}
 		})
+	}
+}
+
+func TestAgentLayoutsFitTextAndIcons(t *testing.T) {
+	for _, state := range []string{"tool", "done"} {
+		style := agentPageStyle(state)
+		rows := composeAgentRows(sampleSource(), agentStateRecord{
+			State: state, Project: strings.Repeat("宽W", 60), Current: strings.Repeat("W", 100),
+			FileCount: 123, Additions: 123456, Deletions: 123456,
+		}, []agentStreamStep{{Kind: "prompt", Text: strings.Repeat("中文W", 60)}}, viewNow)
+		innerHeight := style.Height - 2*(style.PaddingLength+style.BorderWidth)
+		if len(rows)*27 > innerHeight || style.X+style.Width > 576 || style.Y+style.Height > 288 {
+			t.Fatalf("%s layout overflows: %+v, %d rows", state, style, len(rows))
+		}
+		for _, row := range rows {
+			innerWidth := style.Width - 2*(style.PaddingLength+style.BorderWidth)
+			if textUnits(row) > innerWidth {
+				t.Fatalf("%s row exceeds text width: %q", state, row)
+			}
+		}
+		icon := statusIcon(state, 0)
+		if state == "done" && (icon.X <= style.X || icon.X+icon.Width >= style.X+style.Width) {
+			t.Fatalf("completion icon is outside its frame: %+v", icon)
+		}
+	}
+}
+
+func TestTerminalLayoutKeepsOuterFrame(t *testing.T) {
+	style := agentPageStyle("tool")
+	if style.BorderWidth != 1 || style.BorderColor != 7 || style.BorderRadius != 6 || style.PaddingLength != 12 {
+		t.Fatalf("terminal frame style = %+v", style)
+	}
+}
+
+func TestCompletionLayoutKeepsOuterFrame(t *testing.T) {
+	style := agentPageStyle("done")
+	if style.BorderWidth != 2 || style.BorderColor != 15 || style.BorderRadius != 10 || style.PaddingLength != 16 {
+		t.Fatalf("completion frame style = %+v", style)
 	}
 }

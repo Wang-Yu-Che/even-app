@@ -323,6 +323,14 @@ check('idle notifications read as a waiting state, not a permission', () => {
   assert.equal(steps().at(-1).text, 'CodeBuddy is waiting for your input')
 })
 
+check('interrupt notifications and stop failures pause the task', () => {
+  hook({...base, hook_event_name: 'Notification', notification_type: 'turn_interrupted', message: 'Task interrupted'})
+  assert.equal(state().state, 'paused')
+
+  hook({...base, hook_event_name: 'StopFailure'})
+  assert.equal(state().state, 'paused')
+})
+
 check('compaction and stop settle their own steps', () => {
   hook({...base, hook_event_name: 'PreCompact', trigger: 'auto'})
   assert.equal(state().state, 'compacting')

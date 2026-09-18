@@ -43,6 +43,19 @@ const TOOL_ALIASES = {
   'collaboration.spawn_agent': 'Task',
 }
 
+function normalizeToolName(rawTool) {
+  const shortTool = rawTool.split('.').at(-1)
+  const alias = TOOL_ALIASES[rawTool] || TOOL_ALIASES[shortTool]
+  if (alias) return alias
+
+  // Codex hook versions have emitted the same web tool as web.run,
+  // web__run and webrun. Match the semantic name so an internal transport
+  // spelling never leaks into the glasses UI.
+  const compactTool = rawTool.replace(/[^a-z0-9]/gi, '').toLowerCase()
+  if (compactTool === 'webrun') return 'WebSearch'
+  return rawTool
+}
+
 // Tools that mutate a file, mapped to their ledger action.
 const FILE_TOOLS = {
   Write: 'create',
@@ -134,7 +147,7 @@ function handle(payload) {
     stepCount: event === 'UserPromptSubmit' ? settled.length : (previous.stepCount || 0) + settled.length,
     changeCount: event === 'UserPromptSubmit' ? 0 : (previous.changeCount || 0) + successfulChangeCount(event, payload),
     startedAt: event === 'UserPromptSubmit' ? now : previous.startedAt || now,
-    title: readTitle(sessionId) || previous.title || '',
+		title: readTitle(sessionId) || (event === 'UserPromptSubmit' ? promptTitle(payload.prompt) : '') || previous.title || '',
     current: event === 'PreToolUse' || event === 'PermissionRequest' ? current.text : '',
     currentTool: event === 'PreToolUse' ? current.tool : '',
     fileCount: ledger.fileCount,
@@ -164,8 +177,7 @@ function resetTurn(sessionId) {
 // same stream, ledger and rendering contract.
 function normalizePayload(payload) {
   const rawTool = String(payload.tool_name || payload.toolName || payload.tool || '')
-  const shortTool = rawTool.split('.').at(-1)
-  const toolName = TOOL_ALIASES[rawTool] || TOOL_ALIASES[shortTool] || rawTool
+  const toolName = normalizeToolName(rawTool)
   const rawInput = payload.tool_input ?? payload.toolInput ?? payload.input ?? payload.arguments ?? {}
   let toolInput = rawInput && typeof rawInput === 'object'
     ? rawInput
@@ -206,6 +218,7 @@ function resolveState(event, payload) {
     case 'PermissionDenied':
       return 'thinking'
     case 'Notification':
+      if (isPausedNotification(payload)) return 'paused'
       // "permission_prompt" = 需要授权；其余（如 60s 空闲提醒）= 在等你。
       return payload.notification_type === 'permission_prompt' ? 'permission' : 'needs_input'
     case 'PermissionRequest':
@@ -220,12 +233,21 @@ function resolveState(event, payload) {
     case 'TeammateIdle':
       return 'idle'
     case 'Stop':
-    case 'StopFailure':
     case 'SessionEnd':
       return 'done'
+    case 'StopFailure':
+      return 'paused'
     default:
       return ''
   }
+}
+
+function isPausedNotification(payload) {
+  const type = String(payload.notification_type || payload.notificationType || '').toLowerCase()
+  const message = String(payload.message || '').toLowerCase()
+  return type.includes('pause') || type.includes('interrupt') || type.includes('abort') ||
+    message.includes('paused') || message.includes('interrupted') || message.includes('aborted') ||
+    message.includes('已暂停') || message.includes('已中断')
 }
 
 // collectSettledSteps returns the stream entries this event closes out.
@@ -292,6 +314,10 @@ function collectSettledSteps(event, payload, project) {
     steps.push({ ts, kind: 'ask', text: firstLine(payload.message, 100) || '等待你的回答' })
   }
 
+  if (event === 'StopFailure') {
+    steps.push({ ts, kind: 'note', text: '任务已暂停' })
+  }
+
   if (event === 'TaskCreated' || event === 'TaskCompleted') {
     // Only a real subject says anything; the numeric task id on its own renders
     // as "完成任务 · 2", which is noise on a lens row.
@@ -310,7 +336,7 @@ function collectSettledSteps(event, payload, project) {
     steps.push(...readTranscriptTail(payload))
   }
 
-  if (event === 'Stop' || event === 'StopFailure' || event === 'SessionEnd') {
+  if (event === 'Stop' || event === 'SessionEnd') {
     steps.push({ ts, kind: 'done', text: '本轮结束' })
   }
 
@@ -441,7 +467,7 @@ function describeToolCall(payload) {
     case 'WebFetch':
       return { tool, text: clip(input.url, 60) }
     case 'WebSearch':
-      return { tool, text: clip(input.query, 50) }
+      return { tool, text: clip(input.query || input.search_query?.[0]?.q, 50) }
     case 'Task':
     case 'Agent':
       return { tool: 'Task', text: clip(input.description || input.prompt, 50) }
@@ -565,6 +591,12 @@ function firstLine(value, limit) {
   const text = String(value || '').replace(/\s+/g, ' ').trim()
   if (!text) return ''
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text
+}
+
+function promptTitle(value) {
+  const raw = String(value || '')
+  const request = raw.match(/## My request:\s*([\s\S]*)/i)?.[1] || raw
+  return firstLine(request.replace(/<image[\s\S]*?<\/image>/gi, ''), 80)
 }
 
 // --- persistence ----------------------------------------------------------------

@@ -11,17 +11,21 @@ import (
 const (
 	// Every icon update is a fresh bitmap pushed over BLE, so the regular icon
 	// stays compact. The 32px official source geometry is scaled into this box.
-	statusIconSize = 20
+	statusIconSize = 24
 	statusIconID   = 2
 	statusIconName = "state-icon"
-	// The icon is a compact status badge in the dashboard's top-right corner,
-	// leaving the top-left prompt free for the terminal's fixed `>` marker.
-	statusIconX = 516
-	statusIconY = 28
+	// The status badge stays at the top-right, outside the shared text/icon
+	// gutter used by terminal commands and activity rows.
+	statusIconX = 520
+	statusIconY = 34
 
-	completionIconSize = 64
-	completionIconX    = 256
-	completionIconY    = 18
+	completionCardX      = 80
+	completionCardY      = 52
+	completionCardWidth  = 440
+	completionCardHeight = 184
+	completionIconSize   = 48
+	completionIconX      = completionCardX + 24
+	completionIconY      = completionCardY + (completionCardHeight-completionIconSize)/2
 )
 
 const (
@@ -77,6 +81,7 @@ var loadingCellRank = func() [loadingGrid][loadingGrid]int {
 var stillStates = map[string]bool{
 	"needs_input": true,
 	"permission":  true,
+	"paused":      true,
 	"done":        true,
 	"idle":        true,
 	"error":       true,
@@ -118,7 +123,7 @@ func activityIcon(state, tool, current string) string {
 	switch state {
 	case "done":
 		return "complete"
-	case "needs_input", "permission":
+	case "needs_input", "permission", "paused":
 		return "pause"
 	case "error", "failed":
 		return "alert"
@@ -133,7 +138,7 @@ func activityIcon(state, tool, current string) string {
 		return "edit"
 	case "Task", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TodoWrite":
 		return "checklist"
-	case "Bash":
+	case "Bash", "exec_command", "functions.exec_command":
 		command := strings.ToLower(current)
 		if strings.Contains(command, " test") || strings.HasPrefix(command, "test ") ||
 			strings.Contains(command, "lint") || strings.Contains(command, "vet") ||
@@ -274,14 +279,15 @@ func stillPixel(state string, x, y, size int) uint8 {
 	lx := float64(x) * 32 / float64(size)
 	ly := float64(y) * 32 / float64(size)
 	switch state {
-	case "needs_input", "permission":
+	case "needs_input", "permission", "paused":
 		// evenhub-app-ui Edit & Settings Icons/Pause.svg
 		if (lx >= 9 && lx < 11 || lx >= 21 && lx < 23) && ly >= 4 && ly < 28 {
 			return 15
 		}
 	case "done":
-		// evenhub-app-ui Status Icons/Complete.svg
-		if completePixel(lx, ly) {
+		// Keep the completion mark unframed, so the bitmap is only
+		// the official checkmark.
+		if checkmarkPixel(lx, ly) {
 			return 15
 		}
 	case "idle":

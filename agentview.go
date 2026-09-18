@@ -6,47 +6,17 @@ import (
 	"time"
 )
 
-// The glasses list is composed here and nowhere else.
-//
-// A G2 native list row is one unstyled string: the firmware has no colour,
-// icon, font size or alignment control, and it renders an empty row as "·".
-// That leaves exactly three style decisions, and this file owns all three:
-//
-//  1. which glyph opens a row  -> what kind of thing it is, read before the text
-//  2. how wide a row may be    -> counted in the firmware's own glyph units
-//  3. how many rows fit        -> how much history survives
-//
-// The layout follows the Codex CLI reading order on purpose: session, prompt,
-// state, live command, then recent output. Stable positions let a glance work
-// without scanning the whole lens.
-//
-// CALIBRATION — how wide a row may be and how many rows fit are both unknown.
-//
-// The firmware receives each row as an opaque string and clips it at whatever
-// pixel width its font dictates. Nothing pins that down: OpenEvenSdk wraps
-// teleprompter prose at 25 characters, but that is a reading measure for a
-// paragraph, not the width of the lens — and the SDK's own notes say CJK column
-// width has no protocol guarantee at all. So the two numbers below are *our*
-// cap, chosen so the rows we care about fit, and LensCalibration() is how they
-// get replaced by measured ones. Everything that depends on them is these
-// constants.
+// Native text uses the firmware's proportional font and 27px line height.
+// Keep text in a separate column from the bitmap icons.
 const (
-	// asciiUnits and cjkUnits are how the row budget counts glyphs: on this lens
-	// a CJK glyph is about twice as wide as an ASCII one.
-	asciiUnits = 10
-	cjkUnits   = 21
-	// The 536px container has 10px padding and a 1px border on each side,
-	// leaving 514px. Keep a small margin for firmware/font differences.
-	lensUnits = 500
-	// maxRows is how many rows we push. Eight rows across 288 px is about 36 px
-	// per row, which is the constraint that decides this.
-	maxRows = 8
-	// streamReadLimit is how many settled steps are read per refresh. It is
-	// deliberately larger than the row budget so the composer can drop entries
-	// that would only repeat the live line and still fill the screen.
-	streamReadLimit       = 12
-	completionUnits       = 360
-	completionInnerPixels = 364
+	asciiUnits         = 10
+	cjkUnits           = 20
+	lensUnits          = 464
+	maxRows            = 8
+	nativeListPageSize = 6
+	streamReadLimit    = 12
+	completionUnits    = 290
+	completionIndent   = "                      "
 )
 
 // lensStyle is the entire glyph vocabulary of the display. Nothing else in the
@@ -71,13 +41,15 @@ type lensStyle struct {
 // Markers come from the G2 design guide's supported navigation and selection
 // glyphs. Their shapes carry hierarchy without repeating field labels.
 var lens = lensStyle{
-	Header:   ">_ ",
-	Live:     "▶ ",
-	Wait:     "□ ",
-	Fail:     "× ",
-	Step:     "✓ ",
-	Say:      "● ",
-	User:     "▷ ",
+	// The Chinese bracket in sessionPrompt has a wide left side bearing on G2.
+	// One leading space keeps the remaining rows visually aligned with its ink.
+	Header:   " ",
+	Live:     " ▶  ",
+	Wait:     " □  ",
+	Fail:     " ×  ",
+	Step:     " √  ",
+	Say:      " ●  ",
+	User:     " ▷  ",
 	Ledger:   " changes",
 	Ellipsis: "…",
 }
@@ -92,10 +64,12 @@ func composeAgentRows(source statusSource, record agentStateRecord, steps []agen
 		rows = append(rows, goal)
 	}
 	rows = append(rows, statusSummaryRow(record, now))
-	rows = append(rows, focusRow(record, steps))
+	if focus := focusRow(record, steps); focus != "" {
+		rows = append(rows, focus)
+	}
 	activity := activityRows(steps, record, 3)
 	if len(activity) > 0 {
-		rows = append(rows, "  ────────────────────")
+		rows = append(rows, lens.Header+"────────────────────")
 		rows = append(rows, activity...)
 	}
 	return rows
@@ -111,46 +85,23 @@ func composeCompletionRows(source statusSource, record agentStateRecord, now tim
 	}
 	elapsed := strings.TrimPrefix(elapsedRow(record, now), "时间  ")
 	rows := []string{
-		centerCompletionRow("任务已完成"),
-		centerCompletionRow("────────"),
-		centerCompletionRow(source.Label + " · " + name),
+		completionRow("任务已完成"),
+		"",
+		completionRow(source.Label + " · " + name),
+		completionRow("用时 " + elapsed),
 	}
-	summary := "用时 " + elapsed
 	if record.FileCount > 0 {
-		summary += fmt.Sprintf(" · %dF +%d -%d", record.FileCount, record.Additions, record.Deletions)
+		rows = append(rows, completionRow(fmt.Sprintf("%d 个文件 · +%d / -%d", record.FileCount, record.Additions, record.Deletions)))
 	} else if record.StepCount > 0 {
-		summary += fmt.Sprintf(" · %d 步", record.StepCount)
+		rows = append(rows, completionRow(fmt.Sprintf("完成 %d 步", record.StepCount)))
 	}
-	return append(rows, centerCompletionRow(summary))
+	return rows
 }
 
-func centerCompletionRow(text string) string {
+func completionRow(text string) string {
 	text = truncateUnits(text, completionUnits)
-	padding := max(0, (completionInnerPixels-completionTextPixels(text))/(2*5))
-	return strings.Repeat(" ", padding) + text
-}
-
-// completionTextPixels mirrors the useful advances from @evenrealities/pretext
-// for the small completion-page vocabulary. The firmware font uses 5px spaces,
-// 20px CJK glyphs and proportional Latin glyphs; treating them as terminal
-// columns is what made the old result visibly lean left.
-func completionTextPixels(text string) int {
-	width := 0
-	for _, character := range text {
-		switch {
-		case character == ' ' || strings.ContainsRune(".,:;'`·", character):
-			width += 5
-		case strings.ContainsRune("ilI|!", character):
-			width += 4
-		case strings.ContainsRune("mwMW@", character):
-			width += 16
-		case character <= 0x7F:
-			width += 11
-		default:
-			width += 20
-		}
-	}
-	return width
+	leftPadding := (completionUnits - textUnits(text)) / 2
+	return completionIndent + strings.Repeat(" ", leftPadding/characterUnits(' ')) + text
 }
 
 // headerRow is the always-present session identity.
@@ -163,19 +114,22 @@ func headerRow(source statusSource, record agentStateRecord, now time.Time) stri
 		name = source.Label
 	}
 
-	// Keep the final 60 units clear for the top-right toolkit status badge.
-	return truncateUnits(lens.Header+source.Label+" · "+name, lensUnits-60)
+	// The status bitmap lives outside this text column.
+	return sessionPrompt + truncateUnits(source.Label+" · "+name, lensUnits-textUnits(sessionPrompt))
 }
 
 func statusSummaryRow(record agentStateRecord, now time.Time) string {
 	status := map[string]string{
-		"thinking":    "THINKING",
-		"tool":        "RUNNING",
-		"needs_input": "INPUT",
-		"permission":  "PERMISSION",
-		"compacting":  "COMPACTING",
-		"idle":        "IDLE",
-		"done":        "DONE",
+		"thinking":    "正在分析",
+		"tool":        "正在执行",
+		"needs_input": "等待回答",
+		"permission":  "等待授权",
+		"compacting":  "整理上下文",
+		"paused":      "已暂停",
+		"idle":        "空闲",
+		"done":        "已完成",
+		"error":       "发生错误",
+		"failed":      "执行失败",
 	}[record.State]
 	if status == "" {
 		status = "UNKNOWN"
@@ -185,8 +139,8 @@ func statusSummaryRow(record agentStateRecord, now time.Time) string {
 	if isWorkingState(record.State) {
 		prefix = "●"
 	} else if record.State == "done" {
-		prefix = "✓"
-	} else if record.State == "needs_input" || record.State == "permission" {
+		prefix = "√"
+	} else if record.State == "needs_input" || record.State == "permission" || record.State == "paused" {
 		prefix = "□"
 	}
 	summary := prefix + " " + status + "  ·  " + elapsed
@@ -195,7 +149,7 @@ func statusSummaryRow(record agentStateRecord, now time.Time) string {
 	} else if record.ChangeCount > 0 {
 		summary += fmt.Sprintf("  ·  %02d%s", record.ChangeCount, lens.Ledger)
 	}
-	return row("  ", summary)
+	return row(lens.Header, summary)
 }
 
 func focusRow(record agentStateRecord, steps []agentStreamStep) string {
@@ -206,7 +160,91 @@ func focusRow(record agentStateRecord, steps []agentStreamStep) string {
 			}
 		}
 	}
+	if record.State == "tool" && record.Current != "" {
+		return row(lens.Live, describeToolActivity(record.CurrentTool, record.Current, false))
+	}
+	if record.State == "thinking" {
+		for index := len(steps) - 1; index >= 0; index-- {
+			if steps[index].Kind == "say" {
+				return row(lens.Say, stepBody(steps[index]))
+			}
+			if steps[index].Kind == "tool" || steps[index].Kind == "prompt" {
+				break
+			}
+		}
+		if summary := settledWorkSummary(steps); summary != "" {
+			return row(lens.Live, summary)
+		}
+	}
+	if record.Current != "" {
+		return ""
+	}
 	return currentRow(record)
+}
+
+func settledWorkSummary(steps []agentStreamStep) string {
+	for index := len(steps) - 1; index >= 0; index-- {
+		step := steps[index]
+		if step.Kind == "prompt" {
+			break
+		}
+		if step.Kind != "tool" || step.Status == "fail" {
+			continue
+		}
+		target := step.Text
+		if step.File != "" {
+			target = step.File
+		}
+		return describeToolActivity(step.Tool, target, true)
+	}
+	return ""
+}
+
+func describeToolActivity(tool, target string, completed bool) string {
+	target = strings.TrimSpace(target)
+	action := "执行工具"
+	switch tool {
+	case "Read":
+		action = "读取"
+	case "Grep", "Glob", "WebSearch":
+		action = "搜索"
+	case "WebFetch":
+		action = "获取网页"
+	case "Write":
+		action = "写入"
+	case "Edit", "MultiEdit", "NotebookEdit":
+		action = "编辑"
+	case "Skill", "ToolSearch", "tool_search", "functions.tool_search":
+		action = "加载工具"
+	default:
+		if isBashTool(tool) {
+			action = "运行命令"
+			fields := strings.Fields(target)
+			if len(fields) > 0 {
+				switch fields[0] {
+				case "cat", "head", "tail", "sed":
+					action = "读取文件"
+				case "rg", "grep", "find":
+					action = "搜索"
+				case "ls":
+					action = "查看目录"
+				}
+				if action != "运行命令" {
+					target = strings.TrimSpace(strings.TrimPrefix(target, fields[0]))
+				}
+			}
+		} else if target == "" {
+			target = tool
+		}
+	}
+	prefix := "正在"
+	if completed {
+		prefix = "已"
+	}
+	if target == "" {
+		return prefix + action
+	}
+	return prefix + action + " " + target
 }
 
 func goalRow(steps []agentStreamStep) string {
@@ -224,7 +262,7 @@ func elapsedRow(record agentStateRecord, now time.Time) string {
 	}
 	started := time.Unix(0, int64(record.StartedAt*float64(time.Second)))
 	end := now
-	if (record.State == "done" || record.State == "idle") && record.Timestamp > 0 {
+	if (record.State == "done" || record.State == "idle" || record.State == "paused") && record.Timestamp > 0 {
 		end = time.Unix(0, int64(record.Timestamp*float64(time.Second)))
 	}
 	elapsed := end.Sub(started)
@@ -245,6 +283,7 @@ func currentRow(record agentStateRecord) string {
 			"needs_input": "等待你的回答",
 			"permission":  "等待你的授权",
 			"compacting":  "整理上下文",
+			"paused":      "任务已暂停",
 			"idle":        "暂无操作",
 			"done":        "任务结束",
 		}[record.State]
@@ -266,19 +305,25 @@ func questionRows(steps []agentStreamStep, limit int) []string {
 
 func activityRows(steps []agentStreamStep, record agentStateRecord, limit int) []string {
 	live := ""
+	liveBody := ""
 	if record.Current != "" {
-		live = toolAction(record.CurrentTool, record.Current)
+		liveBody = toolAction(record.CurrentTool, record.Current)
+		live = liveToolAction(record.CurrentTool, record.Current)
+	}
+	settledLimit := limit
+	if live != "" {
+		settledLimit--
 	}
 	rows := []string{}
 	for index := len(steps) - 1; index >= 0; index-- {
-		if len(rows) >= limit {
+		if len(rows) >= settledLimit {
 			break
 		}
 		if steps[index].Kind == "prompt" || steps[index].Kind == "say" || steps[index].Kind == "ask" {
 			continue
 		}
 		body := stepBody(steps[index])
-		if body != "" && body != live {
+		if body != "" && body != liveBody {
 			rows = append(rows, activityStepRow(steps[index], body))
 		}
 	}
@@ -288,10 +333,16 @@ func activityRows(steps []agentStreamStep, record agentStateRecord, limit int) [
 	for left, right := 0, len(rows)-1; left < right; left, right = left+1, right-1 {
 		rows[left], rows[right] = rows[right], rows[left]
 	}
+	if live != "" && limit > 0 {
+		rows = append(rows, row(lens.Header, live))
+	}
 	return rows
 }
 
 func activityStepRow(step agentStreamStep, body string) string {
+	if step.Kind == "tool" && isBashTool(step.Tool) {
+		return row(commandPrompt, body)
+	}
 	if step.Kind != "tool" || step.File == "" {
 		return row(stepMarker(step), body)
 	}
@@ -315,7 +366,7 @@ func wrapRows(marker, body string, limit int) []string {
 	for len(remaining) > 0 && len(rows) < limit {
 		prefix := marker
 		if len(rows) > 0 {
-			prefix = "  "
+			prefix = lens.Header + "  "
 		}
 		if len(rows) == limit-1 {
 			rows = append(rows, prefix+truncateUnits(string(remaining), lensUnits-textUnits(prefix)))
@@ -365,6 +416,8 @@ func liveRow(record agentStateRecord) string {
 		return row(lens.Wait, "等你回答")
 	case "permission":
 		return row(lens.Wait, "等你授权")
+	case "paused":
+		return row(lens.Wait, "任务已暂停")
 	case "compacting":
 		return row(lens.Live, "压缩上下文中…")
 	case "idle":
@@ -441,10 +494,10 @@ func stepRows(steps []agentStreamStep, record agentStateRecord, budget int) []st
 }
 
 func fileChangeRow(marker, file, operation string) string {
-	badge := "■ " + operation
+	badge := "● " + operation
 	leftBudget := lensUnits - textUnits(marker) - textUnits(badge) - 80
 	file = truncateUnits(file, max(1, leftBudget))
-	gap := max(1, (lensUnits-textUnits(marker)-textUnits(file)-textUnits(badge))/asciiUnits)
+	gap := max(1, (lensUnits-textUnits(marker)-textUnits(file)-textUnits(badge))/characterUnits(' '))
 	return marker + file + strings.Repeat(" ", gap) + badge
 }
 
@@ -509,13 +562,11 @@ func ledgerRow(record agentStateRecord) string {
 
 // toolAction turns a tool invocation into a verb + target pair.
 func toolAction(tool, target string) string {
-	if tool == "Bash" {
+	if isBashTool(tool) {
 		if target == "" {
-			return "> shell"
+			return "shell"
 		}
-		// ASCII `>` is the p10k-style prompt fallback with reliable G2 font
-		// coverage. It remains separate from lens.Live (the execution marker).
-		return "> " + target
+		return target
 	}
 	verb := map[string]string{
 		"Read":         "R",
@@ -544,6 +595,29 @@ func toolAction(tool, target string) string {
 	return verb + " " + target
 }
 
+// liveToolAction is the only place that renders the command prompt. Settled
+// activity and the status/focus rows show command text without a second icon.
+func liveToolAction(tool, target string) string {
+	action := toolAction(tool, target)
+	if isBashTool(tool) {
+		return commandPrompt + action
+	}
+	return action
+}
+
+const commandPrompt = " >_  "
+
+const sessionPrompt = "【>_ 】 "
+
+func isBashTool(tool string) bool {
+	switch tool {
+	case "Bash", "exec_command", "functions.exec_command":
+		return true
+	default:
+		return false
+	}
+}
+
 // formatElapsed renders a duration the way a glanceable header wants it:
 // m:ss under an hour, h:mm above.
 func formatElapsed(d time.Duration) string {
@@ -562,21 +636,36 @@ func formatElapsed(d time.Duration) string {
 // row assembles a marked row and clips it to the budget. Clipping happens here
 // rather than in each builder so the ellipsis always lands in the same place.
 func row(marker, body string) string {
-	if strings.TrimSpace(body) == "" {
+	body = strings.TrimSpace(body)
+	if body == "" {
 		return ""
 	}
-	return truncateUnits(marker+body, lensUnits)
+	return marker + truncateUnits(body, lensUnits-textUnits(marker))
 }
 
-// characterUnits is how many of the firmware's units one glyph occupies. The
-// metric is not guessed: even-g2-go formats teleprompter text with exactly this
-// rule, so the same arithmetic that keeps a teleprompter line from clipping
-// keeps a list row from clipping.
+// Rounded-up advances from @evenrealities/pretext 0.1.4, in pixels.
+// Rounding each glyph up leaves room for firmware rasterization differences.
+var latinAdvances = [...]int{
+	5, 4, 6, 15, 13, 14, 16, 4, 7, 7, 8, 10, 5, 10, 5, 8,
+	12, 8, 12, 12, 13, 12, 12, 13, 12, 12, 4, 5, 10, 10, 10, 12,
+	17, 14, 12, 12, 12, 11, 11, 12, 12, 6, 9, 12, 10, 16, 12, 12,
+	12, 12, 12, 12, 12, 12, 14, 16, 14, 14, 13, 7, 8, 7, 10, 9,
+	0, 12, 11, 11, 11, 11, 10, 11, 11, 4, 7, 10, 4, 16, 11, 11,
+	11, 11, 8, 11, 8, 12, 12, 16, 12, 12, 10, 9, 4, 9, 16,
+}
+
 func characterUnits(character rune) int {
-	if character <= 0x7F {
-		return asciiUnits
+	if character >= ' ' && character <= '~' {
+		return max(5, latinAdvances[character-' '])
 	}
-	return cjkUnits
+	switch character {
+	case '·':
+		return 5
+	case '…', '×':
+		return 10
+	default:
+		return cjkUnits
+	}
 }
 
 // textUnits measures a string in glyph units, which is what the firmware lays
@@ -642,10 +731,98 @@ func calibrationRows() []string {
 		"1 镜片校准：读最大行号",
 		"abcdefghijklmnopqrstuvwxyz",
 		"甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥",
-		"> ? ! " + lens.Step + "▍ ✓ » × ─ ● " + lens.Say + lens.User + lens.Ledger,
+		"> ? ! " + lens.Step + "▍ √ » × ─ ● " + lens.Say + lens.User + lens.Ledger,
 	}
 	for index := 5; index <= calibrationRowCount; index++ {
 		rows = append(rows, fmt.Sprintf("第%d行", index))
 	}
 	return rows
+}
+
+func sessionProject(record agentStateRecord) string {
+	if record.Project != "" {
+		return record.Project
+	}
+	return "未分类项目"
+}
+
+func composeProjectRows(sessions []agentSession) ([]string, []string) {
+	rows, keys := []string{}, []string{}
+	positions := map[string]int{}
+	active := map[string]bool{}
+	for _, item := range sessions {
+		project := sessionProject(item.record)
+		if _, found := positions[project]; !found {
+			positions[project] = len(rows)
+			rows = append(rows, project)
+			keys = append(keys, "project:"+project)
+		}
+		state := item.record.State
+		if isWorkingState(state) || state == "needs_input" || state == "permission" {
+			active[project] = true
+		}
+	}
+	for project, index := range positions {
+		if active[project] {
+			prefix := "▶ " + truncateUnits(project, lensUnits-textUnits("▶   ●"))
+			gap := max(2, (lensUnits-textUnits(prefix)-textUnits("●"))/characterUnits(' '))
+			rows[index] = prefix + strings.Repeat(" ", gap) + "●"
+		} else {
+			rows[index] = row("", "▶ "+project)
+		}
+	}
+	if len(rows) == 0 {
+		return []string{"暂无项目 · 双击退出"}, []string{""}
+	}
+	return rows, keys
+}
+
+func composeSessionRows(sessions []agentSession) ([]string, []string) {
+	rows, keys := []string{}, []string{}
+	for _, item := range sessions {
+		name := strings.TrimSpace(item.record.Title)
+		if name == "" || name == item.record.SessionID {
+			name = strings.TrimSpace(item.record.ThreadName)
+		}
+		if name == "" || name == item.record.SessionID {
+			steps := readStreamView(item.source.streamDir(), item.record.SessionID, streamReadLimit)
+			for index := len(steps) - 1; index >= 0; index-- {
+				if steps[index].Kind == "prompt" {
+					name = steps[index].Text
+					break
+				}
+			}
+		}
+		if name == "" || name == item.record.SessionID {
+			name = "未命名会话"
+		}
+		name = strings.Join(strings.Fields(name), " ")
+		status := strings.TrimSpace(liveRow(agentStateRecord{State: item.record.State}))
+		label := row("", truncateUnits(name, 120)+" · "+item.source.Label+" · "+status)
+		runes := []rune(label)
+		if len(runes) > 64 {
+			label = string(runes[:63]) + "…"
+		}
+		rows = append(rows, label)
+		keys = append(keys, item.key)
+	}
+	if len(rows) == 0 {
+		return []string{"暂无会话 · 双击返回"}, []string{""}
+	}
+	return rows, keys
+}
+
+func paginateList(rows, keys []string, offset int) ([]string, []string) {
+	end := min(offset+nativeListPageSize, len(rows))
+	pageRows := append([]string(nil), rows[offset:end]...)
+	pageKeys := append([]string(nil), keys[offset:end]...)
+	if offset > 0 {
+		pageRows = append([]string{"‹ 上一页"}, pageRows...)
+		pageKeys = append([]string{"previous"}, pageKeys...)
+	}
+	if end < len(rows) {
+		pageRows = append(pageRows, "下一页 ›")
+		pageKeys = append(pageKeys, "next")
+	}
+	return pageRows, pageKeys
 }

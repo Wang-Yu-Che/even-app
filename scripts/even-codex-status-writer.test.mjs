@@ -50,4 +50,12 @@ hook('PermissionRequest', {toolName: 'functions.exec_command', input: {cmd: 'mak
 assert.equal(state().state, 'permission')
 assert.equal(steps().at(-1).text, 'make install')
 
+hook('PreToolUse', {toolName: 'webrun', input: {search_query: [{q: 'G2 glyph support'}]}})
+assert.equal(state().currentTool, 'WebSearch')
+assert.equal(state().current, 'G2 glyph support')
+
+hook('PostToolUse', {toolName: 'webrun', input: {search_query: [{q: 'G2 glyph support'}]}, output: {success: true}})
+assert.equal(steps().at(-1).tool, 'WebSearch')
+assert.equal(steps().at(-1).text, 'G2 glyph support')
+
 console.log('codex status writer contract: ok')

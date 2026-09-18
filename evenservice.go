@@ -9,6 +9,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,6 +102,7 @@ type EvenService struct {
 	client             *g2.Client
 	clientStatus       g2.Status
 	monitor            *statusMonitor
+	simulator          officialSimulator
 	displayGeneration  uint64
 	connectCancel      context.CancelFunc
 	connectGeneration  uint64
@@ -124,6 +126,7 @@ type EvenService struct {
 	pendingAgentUpdate *agentDisplayUpdate
 	agentDisplayWake   chan struct{}
 	agentPageActive    bool
+	displayedListKeys  []string
 	agentIconState     string
 	// iconMu serialises icon writes between the loading sweep and a status
 	// push, so a sweep that has already been superseded cannot land a frame on
@@ -140,7 +143,8 @@ type EvenService struct {
 }
 
 type agentDisplayUpdate struct {
-	rows []string
+	listKeys []string
+	rows     []string
 	// animate marks a real transition rather than a push that only carries new
 	// rows. A working state uses it to restart the loading sweep, so the block
 	// visibly grows again the moment the agent does something.
@@ -178,7 +182,8 @@ func NewEvenService() *EvenService {
 			service.cachedDevice = &device
 		}
 	}
-	service.monitor = newStatusMonitor(hookSources(), nil)
+	service.monitor = newStatusMonitor(hookSources(), service.notifySessionCompleted)
+	service.monitor.dismissed = true
 	service.monitor.onView = service.pushAgentView
 	service.monitor.Start()
 	go service.runAgentDisplayQueue()
@@ -197,6 +202,7 @@ func (s *EvenService) Connect() (DeviceStatus, error) {
 		device := client.Status().Device
 		_ = client.Close()
 		reconnected, err := g2.ConnectDevice(context.Background(), device, g2.ConnectOptions{
+			Debug: os.Getenv("EVEN_MENU_DEBUG") == "1", Output: os.Stderr,
 			AutoReconnect: true, ReconnectDelay: time.Second,
 		})
 		if err != nil {
@@ -282,6 +288,7 @@ func (s *EvenService) ConnectDevice(leftAddress, rightAddress string) (DeviceSta
 		_ = previous.Close()
 	}
 	client, err := g2.ConnectDevice(context.Background(), device, g2.ConnectOptions{
+		Debug: os.Getenv("EVEN_MENU_DEBUG") == "1", Output: os.Stderr,
 		AutoReconnect: true, ReconnectDelay: time.Second,
 	})
 	s.mu.Lock()
@@ -304,8 +311,8 @@ func (s *EvenService) ConnectDevice(leftAddress, rightAddress string) (DeviceSta
 }
 
 // startConnection starts the client-owned initial connection loop. The SDK's
-// AutoReconnect takes over after the first successful connection; this loop is
-// what keeps scanning when the glasses were not available at app startup.
+// AutoReconnect takes over after the first successful connection; this loop
+// keeps retrying a remembered pair, or scans until the first pair is known.
 func (s *EvenService) startConnection() {
 	s.mu.Lock()
 	if s.client != nil || s.connecting {
@@ -327,9 +334,10 @@ func (s *EvenService) connectUntilReady(ctx context.Context, generation uint64) 
 	s.mu.Lock()
 	cached := s.cachedDevice
 	s.mu.Unlock()
-	if cached != nil {
+	for cached != nil {
 		connectCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		client, err := g2.ConnectDevice(connectCtx, *cached, g2.ConnectOptions{
+			Debug: os.Getenv("EVEN_MENU_DEBUG") == "1", Output: os.Stderr,
 			AutoReconnect: true, ReconnectDelay: time.Second,
 		})
 		cancel()
@@ -348,10 +356,28 @@ func (s *EvenService) connectUntilReady(ctx context.Context, generation uint64) 
 			s.startDeviceSettingsSync(client)
 			return
 		}
+
+		if ctx.Err() != nil {
+			return
+		}
+		s.mu.Lock()
+		if generation == s.connectGeneration {
+			s.lastConnectError = fmt.Sprintf("已配对设备暂时不可用，正在快速重连：%v", err)
+		}
+		s.mu.Unlock()
+
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
 
 	for {
 		client, err := g2.Connect(ctx, g2.ConnectOptions{
+			Debug: os.Getenv("EVEN_MENU_DEBUG") == "1", Output: os.Stderr,
 			AutoReconnect:  true,
 			ReconnectDelay: time.Second,
 		})
@@ -549,6 +575,75 @@ func (s *EvenService) SetScreenPosition(height, depth int) error {
 	})
 }
 
+const codexMenuPackage = "com.wangyuche.evenapp.codex"
+
+func (s *EvenService) notifySessionCompleted(source statusSource, record agentStateRecord) {
+	if source.Agent != "codex" || record.State != "done" {
+		return
+	}
+	notification := sessionCompletionNotification(source, record)
+	delay := time.Duration(0)
+	if s.monitor.displayingSession(source, record) {
+		s.mu.Lock()
+		delay = displayClearDelay(s.displayDuration, record.State)
+		s.mu.Unlock()
+	}
+	if delay > 0 {
+		time.AfterFunc(delay, func() {
+			s.pushSessionCompletionNotification(notification, true)
+		})
+		return
+	}
+	s.pushSessionCompletionNotification(notification, false)
+}
+
+func (s *EvenService) pushSessionCompletionNotification(notification g2.PhoneNotification, replaceDisplay bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.client == nil || !s.client.Status().Ready {
+		return
+	}
+	if replaceDisplay {
+		s.cancelDisplayTimerLocked()
+	}
+	if err := s.client.PushNotification(s.serviceContext, notification); err != nil {
+		s.recordConnectionErrorLocked(fmt.Errorf("发送会话完成通知失败: %w", err))
+	}
+}
+
+func sessionCompletionNotification(source statusSource, record agentStateRecord) g2.PhoneNotification {
+	title := strings.Join(strings.Fields(record.Title), " ")
+	if title == "" {
+		title = strings.Join(strings.Fields(record.ThreadName), " ")
+	}
+	if title == "" {
+		title = record.SessionID
+	}
+	project := strings.TrimSpace(record.Project)
+	if project == "" {
+		project = source.Label
+	}
+	finishedAt := time.Now()
+	if record.Timestamp > 0 {
+		finishedAt = time.Unix(0, int64(record.Timestamp*float64(time.Second)))
+	}
+	elapsed := strings.TrimPrefix(elapsedRow(record, finishedAt), "时间  ")
+	summary := "用时 " + elapsed
+	if record.StepCount > 0 {
+		summary += fmt.Sprintf(" · %d 步", record.StepCount)
+	}
+	message := []string{summary}
+	if record.FileCount > 0 {
+		message = append(message, fmt.Sprintf("%d 个文件 · +%d / -%d", record.FileCount, record.Additions, record.Deletions))
+	}
+	return g2.PhoneNotification{
+		ID: source.Agent + ":" + record.SessionID, PackageName: codexMenuPackage,
+		Title: title, Subtitle: project + " · 已完成", DisplayName: "Codex",
+		Message:   strings.Join(message, "\n"),
+		Timestamp: time.Unix(0, int64(record.Timestamp*float64(time.Second))),
+	}
+}
+
 func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 	if s.subscriptionCancel != nil {
 		s.subscriptionCancel()
@@ -556,11 +651,19 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 	ctx, cancel := context.WithCancel(s.serviceContext)
 	s.subscriptionCancel = cancel
 	s.clientStatus = client.Status()
+	s.monitor.dismissDisplay()
 	events := client.SubscribeEvents(ctx)
 	statuses := client.SubscribeStatus(ctx)
 	errors := client.Errors()
+	if err := client.SetMenu(ctx, []g2.MenuItem{{PackageName: codexMenuPackage, Name: "Codex 会话"}}); err != nil {
+		s.recordConnectionErrorLocked(fmt.Errorf("注册 Codex 菜单失败: %w", err))
+	}
+	if err := client.ConfigureNotifications(ctx, g2.NotificationConfig{Enabled: true, AutoDisplay: true, DurationSeconds: 5}); err != nil {
+		s.recordConnectionErrorLocked(fmt.Errorf("配置会话完成通知失败: %w", err))
+	}
 	go func() {
 		for event := range events {
+			log.Printf("[glasses-event] kind=%s type=%d appID=%d package=%q container=%q", event.Kind.String(), event.Type, event.AppID, event.PackageName, event.Name)
 			s.mu.Lock()
 			if s.client == client {
 				s.lastEvent = DeviceEvent{
@@ -568,7 +671,50 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 					ItemIndex: event.ItemIndex, Type: protocol.EvenHubEventTypeName(event.Type),
 				}
 			}
+			current := s.client == client
+			active := current && s.agentPageActive
+			listPage := isAgentList(s.agentIconState)
+			projectPage := s.agentIconState == "projects"
+			key := ""
+			if event.ItemIndex >= 0 && event.ItemIndex < len(s.displayedListKeys) {
+				key = s.displayedListKeys[event.ItemIndex]
+			}
 			s.mu.Unlock()
+			// Dashboard launches also arrive after the native page has been closed.
+			if current && event.Kind == protocol.EvenHubEventMenu && event.PackageName == codexMenuPackage {
+				log.Printf("[codex-menu] launch received; refreshing list")
+				s.monitor.openSessionList()
+				continue
+			}
+			if current && event.Kind == protocol.EvenHubEventSystem && (event.Type == protocol.EvenHubEventForegroundExit || event.Type == protocol.EvenHubEventSystemExit || event.Type == protocol.EvenHubEventAbnormalExit) {
+				s.mu.Lock()
+				s.monitor.dismissDisplay()
+				s.stopLoadingLocked()
+				s.cancelDisplayTimerLocked()
+				s.agentPageActive = false
+				s.mu.Unlock()
+				continue
+			}
+			if !active {
+				continue
+			}
+			if event.Kind != protocol.EvenHubEventSystem && event.Name != streamContainerName {
+				continue
+			}
+			if event.Type == protocol.EvenHubEventDoubleClick {
+				if projectPage {
+					s.monitor.dismissDisplay()
+					if err := s.ClearDisplay(); err != nil {
+						s.mu.Lock()
+						s.recordConnectionErrorLocked(err)
+						s.mu.Unlock()
+					}
+				} else {
+					s.monitor.handleInput(event.Type)
+				}
+			} else if listPage && event.Kind == protocol.EvenHubEventList && event.Type == protocol.EvenHubEventClick && key != "" {
+				s.monitor.selectListItem(key)
+			}
 		}
 	}()
 	go func() {
@@ -583,6 +729,9 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 				}
 				s.wasReconnecting = reconnecting
 				if becameReady {
+					if !s.monitor.displayDismissed() {
+						s.monitor.resumeDisplay()
+					}
 					s.startDeviceSettingsSync(client)
 				}
 			}
@@ -774,6 +923,7 @@ func (s *EvenService) ClearDisplay() error {
 		s.agentPageActive = false
 		s.agentIconState = ""
 		s.monitor.ClearRows()
+		s.simulator.setPage(" ", blankAgentPageStyle(), nil)
 		return nil
 	})
 }
@@ -893,14 +1043,26 @@ func (s *EvenService) scheduleClearLocked(client *g2.Client, state string) {
 		s.displayTimer = nil
 		s.displayGeneration++
 		s.stopLoadingLocked()
-		if err := client.ShutdownNative(context.Background()); err == nil {
+		if s.agentPageActive {
+			s.monitor.handleInput(protocol.EvenHubEventDoubleClick)
+			return
+		}
+		// Rebuild to one blank, borderless text container instead of shutting the
+		// native page down. Shutdown emits system-exit, which the firmware presents
+		// as "glasses disconnected" even though the BLE link is still healthy.
+		if err := client.ShowTextWithStyle(context.Background(), streamContainerName, " ", blankAgentPageStyle()); err == nil {
 			s.agentPageActive = false
 			s.agentIconState = ""
 			s.monitor.ClearRows()
+			s.simulator.setPage(" ", blankAgentPageStyle(), nil)
 		} else {
-			s.recordConnectionErrorLocked(fmt.Errorf("定时关闭眼镜页面失败: %w", err))
+			s.recordConnectionErrorLocked(fmt.Errorf("定时清空眼镜页面失败: %w", err))
 		}
 	})
+}
+
+func blankAgentPageStyle() g2.TextStyle {
+	return g2.TextStyle{X: 0, Y: 0, Width: 576, Height: 288}
 }
 
 func (s *EvenService) cancelDisplayTimerLocked() {
@@ -934,8 +1096,8 @@ func (s *EvenService) LensCalibration() ([]string, error) {
 // write BLE themselves: they replace the desired frame and wake the one
 // persistent renderer. A slow write therefore collapses any burst that arrives
 // behind it into one current frame instead of a queue of stale ones.
-func (s *EvenService) pushAgentView(rows []string, animate bool, state, icon string) {
-	update := agentDisplayUpdate{rows: append([]string(nil), rows...), animate: animate, state: state, icon: icon}
+func (s *EvenService) pushAgentView(rows []string, animate bool, state, icon string, listKeys []string) {
+	update := agentDisplayUpdate{listKeys: append([]string(nil), listKeys...), rows: append([]string(nil), rows...), animate: animate, state: state, icon: icon}
 	s.agentUpdateMu.Lock()
 	s.pendingAgentUpdate = &update
 	s.agentUpdateMu.Unlock()
@@ -981,43 +1143,68 @@ func shouldRestartSweep(wasLoading bool, update agentDisplayUpdate, previousStat
 	return !wasLoading || update.animate || update.state != previousState
 }
 
+// The terminal keeps a single outer frame. Its inset aligns text and row
+// markers without reserving a separate column for the terminal symbol.
+func agentPageStyle(state string) g2.TextStyle {
+	if state == "done" {
+		return g2.TextStyle{
+			X: completionCardX, Y: completionCardY, Width: completionCardWidth, Height: completionCardHeight,
+			BorderWidth: 2, BorderColor: 15, BorderRadius: 10, PaddingLength: 16,
+		}
+	}
+	return g2.TextStyle{
+		X: 20, Y: 14, Width: 536, Height: 260,
+		BorderWidth: 1, BorderColor: 7, BorderRadius: 6, PaddingLength: 12,
+	}
+}
+
 func (s *EvenService) showQueuedAgentUpdate(update agentDisplayUpdate) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.client == nil {
 		return false
 	}
+	if s.monitor != nil && s.monitor.displayDismissed() {
+		return false
+	}
 	client := s.client
 	previousState := s.agentIconState
-	style := g2.TextStyle{
-		X: 20, Y: 14, Width: 536, Height: 260,
-		BorderWidth: 1, BorderColor: 7, BorderRadius: 6, PaddingLength: 12,
-	}
-	if update.state == "done" {
-		style = g2.TextStyle{
-			X: 88, Y: 104, Width: 400, Height: 164,
-			BorderWidth: 2, BorderColor: 15, BorderRadius: 10, PaddingLength: 16,
-		}
-	}
+	style := agentPageStyle(update.state)
 
 	// The sweep writes the icon from its own goroutine. Stopping it before the
 	// page is touched is what makes the write below the last one to land, and
 	// the call reports back whether it was running at all.
 	wasLoading := s.stopLoadingLocked()
-	layoutChanged := (previousState == "done") != (update.state == "done")
+	layoutChanged := (previousState == "done") != (update.state == "done") || isAgentList(previousState) != isAgentList(update.state)
 	if s.agentPageActive && layoutChanged {
-		if err := client.ShutdownNative(context.Background()); err != nil {
-			s.failAgentPageLocked()
-			return false
-		}
+		// createAgentPage rebuilds the active native page in-place. Mark the app
+		// layout stale without shutting it down: shutdown emits system-exit, which
+		// the firmware presents as "glasses disconnected".
 		s.agentPageActive = false
 	}
 
+	if isAgentList(update.state) {
+		log.Printf("[codex-list] sending state=%s rows=%d", update.state, len(update.rows))
+		if err := client.DisplayListWithStyle(context.Background(), streamContainerName, update.rows, style); err != nil {
+			log.Printf("[codex-list] failed: %v", err)
+			s.recordConnectionErrorLocked(fmt.Errorf("发送会话列表失败: %w", err))
+			s.failAgentPageLocked()
+			return false
+		}
+		log.Printf("[codex-list] SDK confirmed successful acknowledgement")
+		s.displayedListKeys = append([]string(nil), update.listKeys...)
+		s.simulator.setList(update.rows, style)
+		s.agentPageActive = true
+		s.agentIconState = update.state
+		s.cancelDisplayTimerLocked()
+		return true
+	}
 	if s.agentPageActive {
 		if err := client.UpdateText(context.Background(), streamContainerName, strings.Join(update.rows, "\n")); err != nil {
 			s.failAgentPageLocked()
 			return false
 		}
+		s.simulator.setText(strings.Join(update.rows, "\n"))
 	} else if err := s.createAgentPage(client, update.rows, style, update.state, update.icon); err != nil {
 		s.failAgentPageLocked()
 		return false
@@ -1055,14 +1242,26 @@ func (s *EvenService) showQueuedAgentUpdate(update agentDisplayUpdate) bool {
 func (s *EvenService) createAgentPage(client *g2.Client, rows []string, style g2.TextStyle, state, icon string) error {
 	s.iconMu.Lock()
 	defer s.iconMu.Unlock()
-	return client.ShowTextWithIcon(context.Background(), streamContainerName, strings.Join(rows, "\n"), style, statusIconFor(state, icon, 0))
+
+	status := statusIconFor(state, icon, 0)
+	text := strings.Join(rows, "\n")
+	if err := client.ShowTextWithIcon(context.Background(), streamContainerName, text, style, status); err != nil {
+		return err
+	}
+	s.simulator.setPage(text, style, &status)
+	return nil
 }
 
 // setAgentIcon swaps the bitmap for a state that holds still.
 func (s *EvenService) setAgentIcon(client *g2.Client, state, icon string, frame int) error {
 	s.iconMu.Lock()
 	defer s.iconMu.Unlock()
-	return client.UpdateStatusIcon(context.Background(), statusIconFor(state, icon, frame))
+	bitmap := statusIconFor(state, icon, frame)
+	if err := client.UpdateStatusIcon(context.Background(), bitmap); err != nil {
+		return err
+	}
+	s.simulator.setIcon(bitmap)
+	return nil
 }
 
 // failAgentPageLocked marks the page as gone, so the next push rebuilds it
@@ -1158,7 +1357,12 @@ func (s *EvenService) writeLoadingFrame(token uint64, client *g2.Client, state, 
 	if s.loadingToken.Load() != token {
 		return true, nil
 	}
-	return false, client.UpdateStatusIcon(context.Background(), statusIconFor(state, icon, frame))
+	bitmap := statusIconFor(state, icon, frame)
+	if err := client.UpdateStatusIcon(context.Background(), bitmap); err != nil {
+		return false, err
+	}
+	s.simulator.setIcon(bitmap)
+	return false, nil
 }
 
 // repairAgentPage forces the next push to rebuild the page, which is the only
@@ -1175,3 +1379,5 @@ func (s *EvenService) repairAgentPage(token uint64) {
 	s.agentIconState = ""
 	s.cancelDisplayTimerLocked()
 }
+
+func isAgentList(state string) bool { return state == "projects" || state == "sessions" }

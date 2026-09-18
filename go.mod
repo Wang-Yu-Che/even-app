@@ -5,7 +5,7 @@ go 1.25.0
 replace github.com/Wang-Yu-Che/even-g2-go => ../even-g2-go
 
 require (
-	github.com/Wang-Yu-Che/even-g2-go v0.2.0-rc.1
+	github.com/Wang-Yu-Che/even-g2-go v0.2.0
 	github.com/wailsapp/wails/v3 v3.0.0-beta.9
 )
 

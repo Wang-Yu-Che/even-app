@@ -43,15 +43,15 @@ func TestComposeAgentRowsRendersTheWorkingSession(t *testing.T) {
 
 	rows := composeAgentRows(sampleSource(), record, steps, viewNow)
 	want := []string{
-		">_ WorkBuddy · even-app",
-		"▷ 把改动文件推给眼镜",
-		"● RUNNING  ·  2:14  ·  2F +597 -38",
-		"▶ > go build ./...",
-		"  ────────────────────",
+		sessionPrompt + "WorkBuddy · even-app",
+		lens.User + "把改动文件推给眼镜",
+		lens.Header + "● 正在执行  ·  2:14  ·  2F +597 -38",
+		lens.Live + "正在运行命令 go build ./...",
+		lens.Header + "────────────────────",
+		lens.Step + "statusmonitor.go                                 ● M +12 -3",
+		commandPrompt + "go build ./...",
 	}
-	if strings.Join(rows[:len(want)], "\n") != strings.Join(want, "\n") ||
-		!strings.HasPrefix(rows[len(want)], "✓ statusmonitor.go") ||
-		!strings.HasSuffix(rows[len(want)], "■ M +12 -3") {
+	if strings.Join(rows, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("rows =\n%s\nwant\n%s", strings.Join(rows, "\n"), strings.Join(want, "\n"))
 	}
 }
@@ -106,7 +106,7 @@ func TestComposeAgentRowsKeepsInformationOrderFixed(t *testing.T) {
 	steps := []agentStreamStep{{Kind: "tool", Tool: "Read", Status: "ok", Text: "main.go"}}
 	rows := composeAgentRows(sampleSource(), record, steps, viewNow)
 
-	prefixes := []string{">_ WorkBuddy · even-app", "● ", lens.Live}
+	prefixes := []string{sessionPrompt + "WorkBuddy · even-app", lens.Header + "● ", lens.Live + "正在查看目录", lens.Header + "─"}
 	for index, prefix := range prefixes {
 		if !strings.HasPrefix(rows[index], prefix) {
 			t.Fatalf("row %d = %q, want prefix %q", index, rows[index], prefix)
@@ -118,12 +118,12 @@ func TestHeaderKeepsIdentitySeparateFromClock(t *testing.T) {
 	started := float64(viewNow.Add(-2*time.Minute - 14*time.Second).Unix())
 
 	short := headerRow(sampleSource(), agentStateRecord{Project: "even-app", StartedAt: started}, viewNow)
-	if short != ">_ WorkBuddy · even-app" {
+	if short != sessionPrompt+"WorkBuddy · even-app" {
 		t.Fatalf("short header = %q", short)
 	}
 
 	long := headerRow(sampleSource(), agentStateRecord{Project: "a-really-quite-long-project-name", StartedAt: started}, viewNow)
-	if !strings.HasPrefix(long, ">_ WorkBuddy · a-really") {
+	if !strings.HasPrefix(long, sessionPrompt+"WorkBuddy · a-really") {
 		t.Fatalf("long header lost the identity: %q", long)
 	}
 	if !fitsUnits(long, lensUnits) {
@@ -132,7 +132,7 @@ func TestHeaderKeepsIdentitySeparateFromClock(t *testing.T) {
 
 	// With no clock to show at all the identity is still rendered whole.
 	bare := headerRow(sampleSource(), agentStateRecord{Project: "even-app"}, viewNow)
-	if bare != ">_ WorkBuddy · even-app" {
+	if bare != sessionPrompt+"WorkBuddy · even-app" {
 		t.Fatalf("bare header = %q", bare)
 	}
 }
@@ -145,6 +145,7 @@ func TestLiveRowCoversEveryState(t *testing.T) {
 		"needs_input":    lens.Wait + "等你回答",
 		"permission":     lens.Wait + "等你授权",
 		"compacting":     lens.Live + "压缩上下文中…",
+		"paused":         lens.Wait + "任务已暂停",
 		"idle":           lens.Step + "空闲",
 		"":               "",
 		"somethingWeird": "",
@@ -277,11 +278,11 @@ func TestStepBodyLeavesTheMarkerToSayIt(t *testing.T) {
 		step agentStreamStep
 		want string
 	}{
-		{agentStreamStep{Kind: "tool", Tool: "Bash", Status: "fail", Text: "go test ./..."}, "> go test ./..."},
+		{agentStreamStep{Kind: "tool", Tool: "Bash", Status: "fail", Text: "go test ./..."}, "go test ./..."},
 		{agentStreamStep{Kind: "tool", Tool: "Edit", Status: "ok", Text: "agentview.go", File: "agentview.go", Action: "modify", Additions: 8, Deletions: 2}, "M agentview.go  +8 -2"},
 		{agentStreamStep{Kind: "say", Text: "  先看 SDK  "}, "先看 SDK"},
 		{agentStreamStep{Kind: "ask", Text: "运行 rm -rf build"}, "运行 rm -rf build"},
-		{agentStreamStep{Kind: "ask", Tool: "Bash", Text: "rm -rf build"}, "> rm -rf build"},
+		{agentStreamStep{Kind: "ask", Tool: "Bash", Text: "rm -rf build"}, "rm -rf build"},
 		{agentStreamStep{Kind: "ask", Text: "已空闲，等你回来"}, "已空闲，等你回来"},
 		{agentStreamStep{Kind: "prompt", Text: "把改动推给眼镜"}, "把改动推给眼镜"},
 		{agentStreamStep{Kind: "done", Text: "本轮结束"}, "本轮结束"},
@@ -304,16 +305,15 @@ func TestRowRefusesAnEmptyBody(t *testing.T) {
 	}
 }
 
-// TestTextUnitsCountsCJKAsDouble is what keeps a row of Chinese from overflowing
-// while a row of ASCII wastes half the line.
-func TestTextUnitsCountsCJKAsDouble(t *testing.T) {
-	if got := textUnits("abcd"); got != 4*asciiUnits {
+// Proportional Latin glyphs must not be measured as terminal columns.
+func TestTextUnitsUsesFirmwareAdvances(t *testing.T) {
+	if got := textUnits("abcd"); got != 45 {
 		t.Fatalf("ascii units = %d", got)
 	}
 	if got := textUnits("中文"); got != 2*cjkUnits {
 		t.Fatalf("cjk units = %d", got)
 	}
-	if got := textUnits("a中"); got != asciiUnits+cjkUnits {
+	if got := textUnits("a中"); got != 12+cjkUnits {
 		t.Fatalf("mixed units = %d", got)
 	}
 }
@@ -449,9 +449,57 @@ func TestActivityRowsStreamNewestCompletedActions(t *testing.T) {
 		{Kind: "tool", Tool: "Bash", Text: "go test ./..."},
 	}
 	rows := activityRows(steps, agentStateRecord{}, 2)
-	want := []string{lens.Step + "M agentview.go", lens.Step + "> go test ./..."}
+	want := []string{lens.Step + "M agentview.go", commandPrompt + "go test ./..."}
 	if strings.Join(rows, "|") != strings.Join(want, "|") {
 		t.Fatalf("stream rows = %v, want %v", rows, want)
+	}
+}
+
+func TestActivityRowsPinsCurrentCommandAtTheBottomWithoutLiveMarker(t *testing.T) {
+	steps := []agentStreamStep{
+		{Kind: "tool", Tool: "Read", Text: "go.mod"},
+		{Kind: "tool", Tool: "Edit", Text: "agentview.go"},
+	}
+	record := agentStateRecord{State: "tool", CurrentTool: "Bash", Current: "go test ./..."}
+	rows := activityRows(steps, record, 3)
+	want := []string{lens.Step + "R go.mod", lens.Step + "M agentview.go", commandPrompt + "go test ./..."}
+	if strings.Join(rows, "|") != strings.Join(want, "|") {
+		t.Fatalf("activity rows = %v, want %v", rows, want)
+	}
+	if strings.Contains(rows[len(rows)-1], lens.Live) {
+		t.Fatalf("current command still carries the live marker: %q", rows[len(rows)-1])
+	}
+}
+
+func TestLiveCommandPromptAcceptsCodexToolNames(t *testing.T) {
+	for _, tool := range []string{"Bash", "exec_command", "functions.exec_command"} {
+		if got := liveToolAction(tool, "go test ./..."); got != commandPrompt+"go test ./..." {
+			t.Fatalf("liveToolAction(%q) = %q", tool, got)
+		}
+	}
+}
+
+func TestThinkingRowNeverRendersCommandPrompt(t *testing.T) {
+	rows := composeAgentRows(sampleSource(), agentStateRecord{State: "thinking", Project: "even-app"}, nil, viewNow)
+	for _, rendered := range rows[1:] {
+		if strings.HasPrefix(rendered, commandPrompt) {
+			t.Fatalf("thinking view contains command prompt: %v", rows)
+		}
+	}
+}
+
+func TestThinkingViewShowsLatestAssistantOutput(t *testing.T) {
+	steps := []agentStreamStep{
+		{Kind: "say", Text: "先检查页面状态"},
+		{Kind: "tool", Tool: "Read", Text: "agentview.go"},
+		{Kind: "say", Text: strings.Repeat("正在核对终端布局", 20)},
+	}
+	rows := composeAgentRows(sampleSource(), agentStateRecord{State: "thinking", Project: "even-app"}, steps, viewNow)
+	if len(rows) < 3 || !strings.HasPrefix(rows[2], lens.Say+"正在核对终端布局") {
+		t.Fatalf("latest analysis output missing: %v", rows)
+	}
+	if !strings.HasSuffix(rows[2], lens.Ellipsis) || !fitsUnits(rows[2], lensUnits) {
+		t.Fatalf("analysis output was not safely truncated: %q", rows[2])
 	}
 }
 
@@ -474,8 +522,30 @@ func TestComposeAgentRowsPromotesHumanAction(t *testing.T) {
 		{Kind: "ask", Tool: "Bash", Text: "wails3 package"},
 	}
 	rows := composeAgentRows(sampleSource(), record, steps, viewNow)
-	if rows[3] != "□ > wails3 package" {
+	if rows[3] != lens.Wait+"wails3 package" {
 		t.Fatalf("human action was not promoted: %v", rows)
+	}
+}
+
+func TestThinkingShowsSettledWorkSummary(t *testing.T) {
+	steps := []agentStreamStep{
+		{Kind: "prompt", Text: "检查布局"},
+		{Kind: "tool", Tool: "Read", Status: "ok", Text: "agentview.go"},
+		{Kind: "tool", Tool: "Grep", Status: "ok", Text: "sessionPrompt"},
+		{Kind: "tool", Tool: "Edit", Status: "ok", File: "agentview.go", Action: "modify"},
+		{Kind: "tool", Tool: "Bash", Status: "ok", Text: "go test ./..."},
+	}
+	got := focusRow(agentStateRecord{State: "thinking"}, steps)
+	want := lens.Live + "已运行命令 go test ./..."
+	if got != want {
+		t.Fatalf("thinking summary = %q, want %q", got, want)
+	}
+}
+
+func TestFileChangeBadgeUsesSupportedCircle(t *testing.T) {
+	got := fileChangeRow(lens.Step, "agentview.go", "M +1 -1")
+	if !strings.Contains(got, "● M +1 -1") || strings.Contains(got, "■") {
+		t.Fatalf("file change badge = %q", got)
 	}
 }
 
@@ -496,16 +566,53 @@ func TestComposeAgentRowsMakesCompletionProminent(t *testing.T) {
 	if strings.TrimSpace(rows[0]) != "任务已完成" {
 		t.Fatalf("completion title = %q", rows[0])
 	}
-	if strings.TrimSpace(rows[1]) != "────────" {
-		t.Fatalf("completion divider = %q", rows[1])
+	if rows[1] != "" {
+		t.Fatalf("completion spacing = %q", rows[1])
 	}
 	if strings.TrimSpace(rows[2]) != "WorkBuddy · even-app" {
 		t.Fatalf("completion identity = %q", rows[2])
 	}
-	if !strings.HasPrefix(strings.TrimSpace(rows[3]), "用时 3:00 · 2F +28 -6") {
+	if strings.TrimSpace(rows[3]) != "用时 3:00" || strings.TrimSpace(rows[4]) != "2 个文件 · +28 / -6" {
 		t.Fatalf("completion summary = %q", rows[3])
 	}
 	if strings.Contains(strings.Join(rows, "\n"), "任务结束") {
 		t.Fatalf("completion view retained the running-style final action: %v", rows)
+	}
+}
+
+func TestCompletionRowsAreCenteredInTextColumn(t *testing.T) {
+	for _, text := range []string{"任务已完成", "WorkBuddy · even-app", "2 个文件 · +28 / -6"} {
+		got := completionRow(text)
+		content := strings.TrimLeft(got, " ")
+		left := textUnits(got) - textUnits(content) - textUnits(completionIndent)
+		right := completionUnits - textUnits(content) - left
+		if difference := left - right; difference < -characterUnits(' ') || difference > characterUnits(' ') {
+			t.Fatalf("completionRow(%q) is not centered: left=%d right=%d row=%q", text, left, right, got)
+		}
+	}
+}
+
+func TestToolActivityDescriptions(t *testing.T) {
+	for _, tc := range []struct {
+		tool, target string
+		completed    bool
+		want         string
+	}{
+		{"Read", "agentview.go", true, "已读取 agentview.go"},
+		{"Grep", "sessionPrompt", false, "正在搜索 sessionPrompt"},
+		{"Bash", "rg sessionPrompt agentview.go", false, "正在搜索 sessionPrompt agentview.go"},
+		{"Bash", "cat AGENTS.md", true, "已读取文件 AGENTS.md"},
+		{"ToolSearch", "google drive", true, "已加载工具 google drive"},
+	} {
+		if got := describeToolActivity(tc.tool, tc.target, tc.completed); got != tc.want {
+			t.Errorf("got %q, want %q", got, tc.want)
+		}
+	}
+}
+
+func TestLatestToolActivityReplacesEarlierCommentary(t *testing.T) {
+	steps := []agentStreamStep{{Kind: "say", Text: "我先查看文件"}, {Kind: "tool", Tool: "Read", Text: "agentview.go", Status: "ok"}}
+	if got := focusRow(agentStateRecord{State: "thinking"}, steps); got != lens.Live+"已读取 agentview.go" {
+		t.Fatalf("activity = %q", got)
 	}
 }

@@ -58,6 +58,14 @@ export function LensCalibration(): $CancellablePromise<string[] | null> {
     return $Call.ByID(567394971);
 }
 
+/**
+ * PreviewPage returns the actual page model for rendering inside the Wails
+ * window. JSON keeps the external g2 structs out of generated TypeScript types.
+ */
+export function PreviewPage(): $CancellablePromise<string> {
+    return $Call.ByID(2583055872);
+}
+
 export function PushDashboardSchedule(items: $models.DashboardScheduleItem[] | null, experimental: boolean): $CancellablePromise<void> {
     return $Call.ByID(2296762246, items, experimental);
 }
@@ -120,6 +128,14 @@ export function ShowTeleprompter(text: string): $CancellablePromise<void> {
 
 export function StartMicrophone(): $CancellablePromise<void> {
     return $Call.ByID(2464660827);
+}
+
+/**
+ * StartNativeSimulator opens the official desktop simulator only after the
+ * user explicitly requests it from the embedded preview toolbar.
+ */
+export function StartNativeSimulator(): $CancellablePromise<void> {
+    return $Call.ByID(358782026);
 }
 
 export function Status(): $CancellablePromise<$models.DeviceStatus> {

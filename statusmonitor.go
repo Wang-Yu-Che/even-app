@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,9 +12,7 @@ import (
 	"time"
 )
 
-// staleAfter bounds how long a hook state file may go untouched before the
-// session is treated as idle. It guards against agents that die without
-// emitting their Stop / SessionEnd event.
+// Older records remain browsable, but no longer count as active or emit notifications.
 const staleAfter = 12 * time.Hour
 
 // statusPollInterval keeps hook-to-lens latency below a perceptible beat. Hook
@@ -103,14 +102,25 @@ type CodexStatus struct {
 	Rows []string `json:"rows"`
 }
 
+type agentSession struct {
+	key    string
+	source statusSource
+	record agentStateRecord
+}
+
 type statusMonitor struct {
+	listOffset    int
+	project       string
+	dismissed     bool
+	sessions      []agentSession
+	selected      string
 	mu            sync.Mutex
 	sources       []statusSource
 	states        map[string]string
 	started       bool
 	status        CodexStatus
 	onState       func(statusSource, agentStateRecord)
-	onView        func([]string, bool, string, string)
+	onView        func([]string, bool, string, string, []string)
 	composedKey   string
 	composedSteps []agentStreamStep
 	hiddenKey     string
@@ -179,13 +189,13 @@ func (m *statusMonitor) refresh() {
 	present := []string{}
 	available := false
 
-	// The session that moved most recently owns the glasses. With several
-	// agents running, "what did I just touch" is the only sensible single view.
-	var newestSource statusSource
-	var newestRecord agentStateRecord
-	hasNewest := false
+	// Keep the selected session on screen while other sessions update.
+	var selectedSource statusSource
+	var selectedRecord agentStateRecord
+	hasSelected := false
 
 	m.mu.Lock()
+	sessions := []agentSession{}
 	first := !m.started
 	m.started = true
 
@@ -199,19 +209,21 @@ func (m *statusMonitor) refresh() {
 
 		active := 0
 		for _, record := range records {
-			if record.Timestamp > 0 && now.Sub(time.Unix(0, int64(record.Timestamp*float64(time.Second)))) > staleAfter {
-				continue
+			stale := record.Timestamp > 0 && now.Sub(time.Unix(0, int64(record.Timestamp*float64(time.Second)))) > staleAfter
+			if stale && record.State != "done" && record.State != "idle" && record.State != "paused" {
+				record.State = "idle"
 			}
 			key := source.Agent + ":" + record.SessionID
+			sessions = append(sessions, agentSession{key, source, record})
 			previous := m.states[key]
 			m.states[key] = record.State
-			if record.State != "done" && record.State != "idle" {
+			if !stale && record.State != "done" && record.State != "idle" {
 				active++
 			}
-			if !hasNewest || record.Timestamp > newestRecord.Timestamp {
-				newestSource, newestRecord, hasNewest = source, record, true
+			if key == m.selected {
+				selectedSource, selectedRecord, hasSelected = source, record, true
 			}
-			if !first && previous != "" && previous != record.State && m.onState != nil {
+			if !first && !stale && previous != record.State && m.onState != nil {
 				transitions = append(transitions, transition{source, record})
 			}
 		}
@@ -219,32 +231,65 @@ func (m *statusMonitor) refresh() {
 			summaries = append(summaries, fmt.Sprintf("%s %d 个活跃任务", source.Label, active))
 		}
 	}
+	slices.SortStableFunc(sessions, func(left, right agentSession) int {
+		return -cmp.Compare(left.record.Timestamp, right.record.Timestamp)
+	})
+
+	m.sessions = sessions
+	if !hasSelected {
+		m.selected = ""
+	}
 
 	var rows []string
+	var listKeys []string
 	viewKey := ""
 	viewState := ""
 	viewAction := ""
 	viewIcon := ""
 	animate := false
 	streamChanged := false
-	if hasNewest {
-		key := fmt.Sprintf("%s:%s:%s:%d:%d:%f", newestSource.Agent, newestRecord.SessionID, newestRecord.State, newestRecord.StepCount, newestRecord.ChangeCount, newestRecord.StartedAt)
+	if hasSelected {
+		key := fmt.Sprintf("%s:%s:%s:%d:%d:%f", selectedSource.Agent, selectedRecord.SessionID, selectedRecord.State, selectedRecord.StepCount, selectedRecord.ChangeCount, selectedRecord.StartedAt)
 		if key != m.composedKey {
-			m.composedSteps = readStreamView(newestSource.streamDir(), newestRecord.SessionID, streamReadLimit)
+			m.composedSteps = readStreamView(selectedSource.streamDir(), selectedRecord.SessionID, streamReadLimit)
 			m.composedKey = key
 			streamChanged = true
 		}
-		viewKey = newestSource.Agent + ":" + newestRecord.SessionID
-		viewState = newestRecord.State
-		viewAction = fmt.Sprintf("%s:%s:%d", newestRecord.CurrentTool, newestRecord.Current, newestRecord.StepCount)
-		viewIcon = activityIcon(newestRecord.State, newestRecord.CurrentTool, newestRecord.Current)
+		viewKey = selectedSource.Agent + ":" + selectedRecord.SessionID
+		viewState = selectedRecord.State
+		viewAction = fmt.Sprintf("%s:%s:%d", selectedRecord.CurrentTool, selectedRecord.Current, selectedRecord.StepCount)
+		viewIcon = activityIcon(selectedRecord.State, selectedRecord.CurrentTool, selectedRecord.Current)
 		animate = !first && (viewKey != m.viewKey || viewState != m.viewState || viewAction != m.viewAction)
 		if key != m.hiddenKey {
-			rows = composeAgentRows(newestSource, newestRecord, m.composedSteps, now)
+			rows = composeAgentRows(selectedSource, selectedRecord, m.composedSteps, now)
 		}
 	} else {
 		m.composedKey = ""
 		m.composedSteps = nil
+	}
+
+	if m.selected == "" && available {
+		viewState = "projects"
+		if m.project == "" {
+			rows, listKeys = composeProjectRows(sessions)
+		} else {
+			viewState = "sessions"
+			var projectSessions []agentSession
+			for _, item := range sessions {
+				if sessionProject(item.record) == m.project {
+					projectSessions = append(projectSessions, item)
+				}
+			}
+			rows, listKeys = composeSessionRows(projectSessions)
+		}
+		m.listOffset = max(0, min(m.listOffset, (len(rows)-1)/nativeListPageSize*nativeListPageSize))
+		rows, listKeys = paginateList(rows, listKeys, m.listOffset)
+		viewKey = viewState + ":" + m.project
+		animate = viewKey != m.viewKey || !slices.Equal(rows, m.status.Rows)
+	}
+
+	if m.dismissed {
+		rows = nil
 	}
 
 	// Hand the rows over only when something moved that is worth moving for.
@@ -256,7 +301,7 @@ func (m *statusMonitor) refresh() {
 	// their own timer instead.
 	meaningful := animate || streamChanged
 	due := m.lastPush.IsZero() || now.Sub(m.lastPush) >= clockPushFloor
-	publish := !slices.Equal(rows, m.status.Rows) && (len(rows) == 0 || meaningful || due)
+	publish := (viewKey != m.viewKey || !slices.Equal(rows, m.status.Rows)) && (len(rows) == 0 || meaningful || due)
 	previousRows := m.status.Rows
 
 	switch {
@@ -284,7 +329,7 @@ func (m *statusMonitor) refresh() {
 	onView := m.onView
 	m.mu.Unlock()
 	if publish && onView != nil && len(rows) > 0 {
-		onView(rows, animate, viewState, viewIcon)
+		onView(rows, animate, viewState, viewIcon, listKeys)
 	}
 
 	for _, item := range transitions {
@@ -360,4 +405,84 @@ func readStreamView(dir, sessionID string, actionLimit int) []agentStreamStep {
 		break
 	}
 	return view
+}
+
+func (m *statusMonitor) handleInput(eventType int) {
+	if eventType != 3 {
+		return
+	}
+	m.mu.Lock()
+	if m.selected != "" {
+		m.selected = ""
+	} else {
+		m.project = ""
+		m.listOffset = 0
+	}
+	m.hiddenKey = ""
+	m.lastPush = time.Time{}
+	m.mu.Unlock()
+	m.refresh()
+}
+
+func (m *statusMonitor) selectListItem(key string) {
+	m.mu.Lock()
+	switch key {
+	case "previous":
+		m.listOffset = max(0, m.listOffset-nativeListPageSize)
+	case "next":
+		m.listOffset += nativeListPageSize
+	default:
+		if strings.HasPrefix(key, "project:") {
+			m.project = strings.TrimPrefix(key, "project:")
+			m.listOffset = 0
+		} else {
+			m.selected = key
+		}
+	}
+	m.hiddenKey = ""
+	m.lastPush = time.Time{}
+	m.mu.Unlock()
+	m.refresh()
+}
+
+func (m *statusMonitor) dismissDisplay() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dismissed = true
+	m.status.Rows = nil
+}
+
+func (m *statusMonitor) displayDismissed() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.dismissed
+}
+
+func (m *statusMonitor) displayingSession(source statusSource, record agentStateRecord) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.dismissed && m.selected == source.Agent+":"+record.SessionID
+}
+
+func (m *statusMonitor) openSessionList() {
+	m.mu.Lock()
+	m.selected = ""
+	m.project = ""
+	m.listOffset = 0
+	m.dismissed = false
+	m.status.Rows = nil
+	m.hiddenKey = ""
+	m.lastPush = time.Time{}
+	m.mu.Unlock()
+	m.refresh()
+}
+
+func (m *statusMonitor) resumeDisplay() {
+	m.mu.Lock()
+	m.dismissed = false
+	m.status.Rows = nil
+	m.hiddenKey = ""
+	m.lastPush = time.Time{}
+	m.mu.Unlock()
+	m.refresh()
 }

@@ -5,15 +5,13 @@
 		<key>CFBundleExecutable</key>
 		<string>even-app</string>
 		<key>CFBundleGetInfoString</key>
-		<string>Even Control for macOS</string>
+		<string>Even Glasses for macOS</string>
 		<key>CFBundleIconFile</key>
 		<string>icons</string>
-		<key>CFBundleIconName</key>
-		<string>appicon</string>
 		<key>CFBundleIdentifier</key>
 		<string>com.wangyuche.evencontrol</string>
 		<key>CFBundleName</key>
-		<string>Even Control</string>
+		<string>Even Glasses</string>
 		<key>CFBundlePackageType</key>
 		<string>APPL</string>
 		<key>CFBundleShortVersionString</key>
@@ -29,6 +27,8 @@
 		</dict>
 		<key>NSHighResolutionCapable</key>
 		<string>true</string>
+		<key>NSBluetoothAlwaysUsageDescription</key>
+		<string>Even Glasses uses Bluetooth to connect to and communicate with your Even G2 glasses.</string>
 		<key>NSHumanReadableCopyright</key>
 		<string>© 2026 Wang Yu Che</string>
 	</dict>

@@ -6,8 +6,8 @@
     {
       "layers" : [
         {
-          "image-name" : "even_ai.svg",
-          "name" : "even_ai",
+          "image-name" : "glasses.svg",
+          "name" : "glasses",
           "position" : {
             "scale" : 0.68,
             "translation-in-points" : [

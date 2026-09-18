@@ -35,7 +35,7 @@ func main() {
 	// 'Bind' is a list of Go struct instances. The frontend has access to the methods of these instances.
 	// 'Mac' options tailor the application when running an macOS.
 	app := application.New(application.Options{
-		Name:        "Even Control",
+		Name:        "Even Glasses",
 		Description: "A macOS client for Even Realities G2",
 		Services: []application.Service{
 			application.NewService(service),
@@ -54,7 +54,7 @@ func main() {
 	// 'BackgroundColour' is the background colour of the window.
 	// 'URL' is the URL that will be loaded into the webview.
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "Even Control",
+		Title:  "Even Glasses",
 		Width:  1080,
 		Height: 720,
 		Mac: application.MacWindow{
@@ -81,7 +81,7 @@ func main() {
 	if runtime.GOOS == "darwin" {
 		tray.SetTemplateIcon(icons.SystrayMacTemplate)
 	}
-	tray.SetTooltip("Even Control · 眼镜显示")
+	tray.SetTooltip("Even Glasses · 眼镜显示")
 
 	menu := app.NewMenu()
 	statusItem := menu.Add("眼镜当前无显示").SetEnabled(false)
@@ -91,10 +91,10 @@ func main() {
 		previewItems[index] = menu.Add(" ").SetEnabled(false).SetHidden(true)
 	}
 	menu.AddSeparator()
-	menu.Add("显示 Even Control").OnClick(func(*application.Context) {
+	menu.Add("显示 Even Glasses").OnClick(func(*application.Context) {
 		window.Show().Focus()
 	})
-	menu.Add("退出 Even Control").OnClick(func(*application.Context) {
+	menu.Add("退出 Even Glasses").OnClick(func(*application.Context) {
 		app.Quit()
 	})
 	tray.SetMenu(menu)
@@ -142,6 +142,7 @@ func trayPreview(status CodexStatus) (label, heading string, rows []string) {
 		"tool":        "RUN",
 		"needs_input": "INPUT",
 		"permission":  "INPUT",
+		"paused":      "PAUSE",
 		"done":        "DONE",
 		"error":       "ERROR",
 		"failed":      "ERROR",

@@ -202,6 +202,22 @@ tasks:
       - "windows/icon.ico"
     cmds:
       - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico -iconcomposerinput appicon.icon -macassetdir darwin
+      - cmd: |
+          ICONSET_DIR=$(mktemp -d /tmp/even-glasses-iconset.XXXXXX)/icons.iconset
+          mkdir -p "$ICONSET_DIR"
+          sips -z 16 16 appicon.png --out "$ICONSET_DIR/icon_16x16.png" >/dev/null
+          sips -z 32 32 appicon.png --out "$ICONSET_DIR/icon_16x16@2x.png" >/dev/null
+          sips -z 32 32 appicon.png --out "$ICONSET_DIR/icon_32x32.png" >/dev/null
+          sips -z 64 64 appicon.png --out "$ICONSET_DIR/icon_32x32@2x.png" >/dev/null
+          sips -z 128 128 appicon.png --out "$ICONSET_DIR/icon_128x128.png" >/dev/null
+          sips -z 256 256 appicon.png --out "$ICONSET_DIR/icon_128x128@2x.png" >/dev/null
+          sips -z 256 256 appicon.png --out "$ICONSET_DIR/icon_256x256.png" >/dev/null
+          sips -z 512 512 appicon.png --out "$ICONSET_DIR/icon_256x256@2x.png" >/dev/null
+          sips -z 512 512 appicon.png --out "$ICONSET_DIR/icon_512x512.png" >/dev/null
+          cp appicon.png "$ICONSET_DIR/icon_512x512@2x.png"
+          iconutil -c icns "$ICONSET_DIR" -o darwin/icons.icns
+          rm -r "$(dirname "$ICONSET_DIR")"
+        platforms: [darwin]
 
   dev:frontend:
     summary: Runs the frontend in development mode

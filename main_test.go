@@ -6,7 +6,7 @@ import (
 )
 
 func TestTrayPreviewMirrorsGlassesRows(t *testing.T) {
-	status := CodexStatus{State: "tool", Rows: []string{">_ Codex · even-app", "● RUNNING", "▶ > go test ./..."}}
+	status := CodexStatus{State: "tool", Rows: []string{lens.Header + "Codex · even-app", "● RUNNING", commandPrompt + "go test ./..."}}
 	label, heading, rows := trayPreview(status)
 	if label != " RUN" || heading != "眼镜当前显示" {
 		t.Fatalf("tray summary = (%q, %q)", label, heading)

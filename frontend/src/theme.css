@@ -212,15 +212,12 @@ body {
   padding-left: 78px;
 }
 
-/* The preview follows the official simulator's framebuffer contract: a
-   576×288 transparent canvas where alpha-lit pixels appear G2 green. The black
-   desktop background stands in for the real-world view behind unlit pixels. */
+/* Display the official renderer's RGBA framebuffer without additional effects. */
 .lens-simulator-shell {
   overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: 10px;
   background: #080b09;
-  box-shadow: inset 0 0 0 1px rgba(60, 250, 68, 0.04), 0 12px 32px rgba(0, 0, 0, 0.18);
 }
 
 .lens-simulator-toolbar {
@@ -229,140 +226,52 @@ body {
   justify-content: space-between;
   height: 30px;
   padding: 0 10px;
-  border-bottom: 1px solid rgba(60, 250, 68, 0.12);
-  color: rgba(155, 255, 159, 0.56);
-  font: 500 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.08em;
+  color: #9bff9f;
+  font-size: 9px;
 }
 
-.lens-simulator-toolbar i {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-right: 5px;
-  border-radius: 50%;
-  background: #3cfa44;
-  box-shadow: 0 0 6px rgba(60, 250, 68, 0.9);
+.lens-simulator-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lens-simulator-actions button {
+  padding: 2px 7px;
+  border: 1px solid #315b35;
+  border-radius: 4px;
+  color: #9bff9f;
+  line-height: 16px;
+}
+
+.lens-simulator-actions button:hover {
+  background: #142217;
 }
 
 .lens-display {
   position: relative;
-  container-type: inline-size;
   width: 100%;
+  max-width: 576px;
   aspect-ratio: 2 / 1;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 50% 44%, rgba(35, 82, 38, 0.15), transparent 68%),
-    #010302;
-  color: #3cfa44;
-  text-shadow: 0 0 3px rgba(60, 250, 68, 0.5);
+  background: #000;
 }
 
-.lens-display::after {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  content: "";
-  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, 0.13) 3px);
-}
-
-.lens-text-container {
-  position: absolute;
-  left: 3.4722%;
-  top: 4.8611%;
-  width: 93.0556%;
-  height: 90.2778%;
-  overflow: hidden;
-  box-sizing: border-box;
-  padding: 2.0833%;
-  border: 1px solid rgba(60, 250, 68, 0.55);
-  border-radius: 6px;
-  font-family: system-ui, "PingFang SC", sans-serif;
-  font-size: 3.125cqi;
-  line-height: 4.6875cqi;
-  white-space: pre-wrap;
-}
-
-.lens-status-icon {
-  position: absolute;
-  left: 89.5833%;
-  top: 9.7222%;
-  width: 3.4722%;
-  aspect-ratio: 1;
-  z-index: 1;
-}
-
-.lens-loading-grid {
-  display: grid;
+.lens-display img,
+.lens-display canvas {
+  display: block;
   width: 100%;
   height: 100%;
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: repeat(4, 1fr);
+  object-fit: contain;
 }
-
-.lens-loading-grid i {
-  background: #3cfa44;
-  animation: lens-pixel-sweep 1.5s steps(1) infinite;
-}
-
-@keyframes lens-pixel-sweep {
-  0%, 100% { opacity: 0.08; }
-  18%, 58% { opacity: 1; box-shadow: 0 0 3px rgba(60, 250, 68, 0.8); }
-  76% { opacity: 0.08; }
-}
-
-.lens-pause {
-  display: flex;
-  justify-content: center;
-  gap: 25%;
-  width: 100%;
-  height: 100%;
-  padding-block: 12%;
-}
-
-.lens-pause i { width: 22%; background: #3cfa44; }
-
-.lens-check,
-.lens-alert {
-  position: absolute;
-  inset: 0;
-}
-
-.lens-check::before,
-.lens-check::after {
-  position: absolute;
-  height: 8%;
-  background: #3cfa44;
-  content: "";
-  transform-origin: left center;
-}
-
-.lens-check::before { left: 18%; top: 55%; width: 35%; transform: rotate(45deg); }
-.lens-check::after { left: 43%; top: 72%; width: 58%; transform: rotate(-50deg); }
-
-.lens-alert {
-  box-sizing: border-box;
-  border: max(1px, 0.3472cqi) solid #3cfa44;
-}
-
-.lens-alert::before,
-.lens-alert::after {
-  position: absolute;
-  left: 46%;
-  width: 8%;
-  background: #3cfa44;
-  content: "";
-}
-
-.lens-alert::before { top: 18%; height: 38%; }
-.lens-alert::after { top: 68%; height: 8%; }
 
 .lens-empty {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  color: rgba(60, 250, 68, 0.28);
-  font: 500 2.4cqi/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.12em;
+  padding: 20px;
+  color: #9bff9f;
+  font-size: 12px;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
