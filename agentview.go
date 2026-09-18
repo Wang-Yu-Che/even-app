@@ -763,11 +763,31 @@ func composeProjectRows(sessions []agentSession) ([]string, []string) {
 		}
 	}
 	for project, index := range positions {
-		suffix := "  ▶"
+		reserved := "▶ "
 		if active[project] {
-			suffix += "  ●"
+			reserved += "  ●"
 		}
-		rows[index] = row("", truncateUnits(project, lensUnits-textUnits(suffix))+suffix)
+		name := truncateUnits(project, lensUnits-textUnits(reserved))
+		byteBudget := 63 - len(reserved)
+		if len(name) > byteBudget {
+			end := 0
+			for offset := range name {
+				if offset > byteBudget-len(lens.Ellipsis) {
+					break
+				}
+				end = offset
+			}
+			name = strings.TrimRight(name[:end], " ") + lens.Ellipsis
+		}
+		prefix := "▶ " + name
+		if active[project] {
+			gap := max(2, (lensUnits-textUnits(prefix)-textUnits("●"))/characterUnits(' '))
+			// List items allow at most 63 UTF-8 bytes, including alignment spaces.
+			gap = min(gap, 63-len(prefix)-len("●"))
+			rows[index] = prefix + strings.Repeat(" ", gap) + "●"
+		} else {
+			rows[index] = prefix
+		}
 	}
 	if len(rows) == 0 {
 		return []string{"暂无项目 · 双击退出"}, []string{""}

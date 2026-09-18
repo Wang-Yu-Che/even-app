@@ -5,7 +5,33 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
+
+func TestProjectRowsRespectByteAndPixelLimits(t *testing.T) {
+	for _, project := range []string{"even-app", strings.Repeat("i", 100), strings.Repeat("中文项目", 20)} {
+		for _, state := range []string{"working", "done"} {
+			rows, keys := composeProjectRows([]agentSession{{record: agentStateRecord{Project: project, State: state}}})
+			line := rows[0]
+			if !utf8.ValidString(line) || len(line) > 63 || textUnits(line) > lensUnits {
+				t.Fatalf("invalid row: %q (%d bytes, %d pixels)", line, len(line), textUnits(line))
+			}
+			if !strings.HasPrefix(line, "▶ ") || keys[0] != "project:"+project {
+				t.Fatalf("project entry changed: %q, %v", line, keys)
+			}
+			if state == "working" {
+				if !strings.HasSuffix(line, "  ●") {
+					t.Fatalf("missing activity marker: %q", line)
+				}
+				if len(line) < 63 && textUnits(line)+characterUnits(' ') <= lensUnits {
+					t.Fatalf("activity marker could move farther right: %q", line)
+				}
+			} else if strings.HasSuffix(line, "●") {
+				t.Fatalf("inactive project has activity marker: %q", line)
+			}
+		}
+	}
+}
 
 var viewNow = time.Date(2026, 9, 11, 9, 30, 0, 0, time.UTC)
 

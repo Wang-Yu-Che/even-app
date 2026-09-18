@@ -526,7 +526,7 @@ func TestProjectFoldersAndSessionTitles(t *testing.T) {
 	if monitor.Status().State != "projects" || len(keys) != 2 || keys[0] != "project:even-app" {
 		t.Fatalf("projects: %v %v", monitor.Rows(), keys)
 	}
-	if !strings.HasSuffix(monitor.Rows()[0], "▶  ●") || !strings.HasSuffix(monitor.Rows()[1], "▶") {
+	if !strings.HasPrefix(monitor.Rows()[0], "▶ even-app") || !strings.HasSuffix(monitor.Rows()[0], "●") || monitor.Rows()[1] != "▶ other" {
 		t.Fatalf("activity dots: %v", monitor.Rows())
 	}
 	monitor.selectListItem(keys[0])
