@@ -7,7 +7,7 @@ import {
 type Page = {
   list?: { items: string[]; itemWidth: number; selectBorder: boolean }
   text: string
-  style: { X: number; Y: number; Width: number; Height: number; BorderWidth: number; BorderColor: number; BorderRadius: number; PaddingLength: number }
+  style: { X: number; Y: number; Width: number; Height: number; BorderWidth: number; BorderColor: number; BorderRadius: number; PaddingLength: number; ListItemWidth: number }
   icon: { ID: number; Name: string; X: number; Y: number; Width: number; Height: number; BMP: string } | null
 }
 

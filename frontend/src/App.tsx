@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { getTextWidth } from '@evenrealities/pretext'
 /*
  * Components come in through their own subpaths rather than the
@@ -18,27 +18,28 @@ import { Divider } from 'even-toolkit/web/divider'
 import { Input } from 'even-toolkit/web/input'
 import { Loading } from 'even-toolkit/web/loading'
 import { NavHeader } from 'even-toolkit/web/nav-header'
-import { SectionHeader } from 'even-toolkit/web/section-header'
 import { SegmentedControl } from 'even-toolkit/web/segmented-control'
 import { StatusDot } from 'even-toolkit/web/status-dot'
 import { Textarea } from 'even-toolkit/web/textarea'
+import { Toggle } from 'even-toolkit/web/toggle'
 import {
   IcEditDisplayAdj,
   IcFeatScreenOff,
   IcFeatTheme,
+  IcGuideChevronSmallDrillDown,
   IcStatusBluetooth,
   IcStatusBluetoothDisconnected,
   IcStatusGlasses,
 } from 'even-toolkit/web/icons/svg-icons'
-import { EvenService } from '../bindings/changeme'
-import type { CodexStatus, DashboardScheduleItem, DeviceCandidate, DeviceStatus } from '../bindings/changeme'
+import { EvenService } from '../bindings/even-glasses'
+import type { CodexStatus, DashboardScheduleItem, DeviceCandidate, DeviceStatus } from '../bindings/even-glasses'
 
 /*
- * The desktop client is a control surface for one lens page, so the layout is a
- * three-column panel rather than the phone-shaped stack these components are
- * written for: device on the left, what to send in the middle, what the lens is
- * showing on the right. The components are the library's; the arrangement is
- * ours.
+ * The desktop client is a control surface for one lens page, so the window is
+ * read top to bottom rather than as a phone-shaped stack: a lens preview that
+ * folds away when nobody is watching it, a section switcher that stays put
+ * while the panels scroll, then the panels of the active section in a grid.
+ * The components are the library's; the arrangement is ours.
  */
 
 const initialStatus: DeviceStatus = {
@@ -92,11 +93,36 @@ const capabilityLabels: Record<keyof DeviceStatus['capabilities'], string> = {
   dashboard: 'Dashboard',
 }
 
+// Display names only — the states themselves come from the hook adapters in
+// scripts/. An unknown state falls through to its raw value, so a new adapter
+// shows up as itself instead of as an empty label.
+const stateLabels: Record<string, string> = {
+  idle: '空闲',
+  thinking: '思考中',
+  tool: '调用工具',
+  compacting: '整理上下文',
+  needs_input: '等待输入',
+  permission: '等待授权',
+  paused: '已暂停',
+  done: '已完成',
+  error: '出错',
+  failed: '失败',
+}
+
 // An empty state means no session has been pushed yet, which is not the same as
 // an unrecognised one — nothing is running, so nothing should sweep.
 const isWorkingState = (state: string) => state !== '' && !stillStates.has(state)
 
 type Notice = { text: string; error: boolean }
+
+type SectionKey = 'overview' | 'display' | 'settings' | 'labs'
+
+const sections: { value: SectionKey; label: string; hint: string }[] = [
+  { value: 'overview', label: '概览', hint: '连接、状态桥与实时输入' },
+  { value: 'display', label: '显示', hint: '把文本、列表或图片推到镜片' },
+  { value: 'settings', label: '设备设置', hint: '亮度、抬头显示与屏幕位置' },
+  { value: 'labs', label: '实验与诊断', hint: 'Dashboard 与连接排查' },
+]
 
 type PreviewPage = {
   list?: { items: string[]; itemWidth: number; selectBorder: boolean }
@@ -190,7 +216,10 @@ async function drawPreview(canvas: HTMLCanvasElement, page: PreviewPage) {
   }
 }
 
-function LensPreview() {
+// The canvas renders whatever the service last handed to the glasses, including
+// the BMP status icon, so the panel is a faithful readout and not a mock-up.
+// It is only mounted while the preview is unfolded.
+function LensCanvas() {
   const canvas = useRef<HTMLCanvasElement>(null)
   const [error, setError] = useState('')
   const [nativeError, setNativeError] = useState('')
@@ -237,8 +266,167 @@ function LensPreview() {
   )
 }
 
+/*
+ * The lens preview is folded by default: it is a readout, not the thing you came
+ * to the window for, and at 576×288 it costs a third of the viewport. The folded
+ * strip still carries the state and the row count, so hiding it never hides the
+ * answer to "is something running".
+ */
+function LensPanel({ open, onToggle, summary, state, sweeping, rows }: {
+  open: boolean
+  onToggle: () => void
+  summary: string
+  state: string
+  sweeping: boolean
+  rows: string[]
+}) {
+  return (
+    <Card padding="none" className="overflow-hidden border border-border">
+      <button
+        type="button"
+        className="lens-fold-head"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className="lens-mark" aria-hidden="true">
+          <IcStatusGlasses width={18} height={18} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2">
+            <span className="text-normal-title text-text">内置眼镜预览</span>
+            {sweeping ? <Loading size={14} /> : null}
+          </span>
+          <span className="mt-0.5 block truncate text-detail text-text-dim">{summary}</span>
+        </span>
+        {state ? <Badge variant="neutral">{state}</Badge> : null}
+        <IcGuideChevronSmallDrillDown
+          className={`lens-fold-chevron${open ? ' is-open' : ''}`}
+          width={16}
+          height={16}
+        />
+      </button>
+      {open ? <LensPanelBody rows={rows} /> : null}
+    </Card>
+  )
+}
+
+// Rows come straight from CodexStatus, which is the composed list the lens is
+// showing. Printing them beside the canvas makes the page reviewable without
+// putting the glasses on, and fills the width the 576px canvas cannot use.
+function LensPanelBody({ rows }: { rows: string[] }) {
+  return (
+    <div className="lens-fold-body">
+      <LensCanvas />
+      <div className="min-w-0">
+        <div className="mb-2 flex items-baseline justify-between gap-3">
+          <span className="text-subtitle text-text-dim">发送中的镜片行</span>
+          <span className="text-detail text-text-muted">{rows.length} 行 · 直接取状态桥</span>
+        </div>
+        {rows.length ? (
+          <ol className="lens-rows">
+            {rows.map((row, index) => (
+              <li key={index} className="lens-row">
+                <span className="lens-row-index">{index + 1}</span>
+                <span className="lens-row-text">{row}</span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="lens-rows lens-rows-empty">当前没有推送任何行</p>
+        )}
+        <p className="mt-3 text-detail leading-relaxed text-text-muted">
+          直接渲染发送给眼镜的文本、边框与 BMP 图标；无需启动外部模拟器，最终显示以真机为准。
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/*
+ * SectionHeader is sized for a phone screen — one 20px title per screen. A
+ * desktop panel grid stacks a dozen of them, so panels use the system's
+ * normal-title with a detail line underneath, on the same tracking and colour
+ * tokens. The border is what makes a white card read as a card on the grey page.
+ */
+function Panel({ title, hint, action, className, children }: {
+  title: string
+  hint?: ReactNode
+  action?: ReactNode
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <Card className={`border border-border ${className ?? ''}`}>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-normal-title text-text">{title}</h2>
+          {hint ? <p className="mt-1 text-detail leading-[1.55] text-text-dim">{hint}</p> : null}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
+      {children}
+    </Card>
+  )
+}
+
+// Tiles carry the read-only values: arms, battery, counters. They sit on
+// surface-light so a row of them reads as one grouped block.
+function Tile({ label, value, hint }: { label: string; value: ReactNode; hint?: ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-[6px] bg-surface-light px-3 py-2">
+      <div className="text-detail text-text-muted">{label}</div>
+      <div className="mt-0.5 truncate text-subtitle text-text">{value}</div>
+      {hint ? <div className="mt-0.5 truncate text-detail text-text-muted">{hint}</div> : null}
+    </div>
+  )
+}
+
+// The toolkit forces `appearance: none` on every select and clears its
+// background-image, so the native arrow cannot be styled back in — the chevron
+// has to be a sibling element. Without it the two device pickers look like
+// plain text boxes.
+function DeviceSelect({ label, value, onChange, children }: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  children: ReactNode
+}) {
+  return (
+    <div className="relative">
+      <select
+        aria-label={label}
+        className="h-9 w-full appearance-none rounded-[6px] bg-input-bg pl-3 pr-8 text-subtitle text-text outline-none"
+        value={value}
+        onChange={event => onChange(event.target.value)}
+      >
+        {children}
+      </select>
+      <IcGuideChevronSmallDrillDown
+        className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-dim"
+        width={16}
+        height={16}
+      />
+    </div>
+  )
+}
+
+function SwitchRow({ label, checked, onChange, disabled }: {
+  label: string
+  checked: boolean
+  onChange: (value: boolean) => void
+  disabled?: boolean
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1">
+      <span className="text-subtitle text-text">{label}</span>
+      <Toggle checked={checked} onChange={onChange} disabled={disabled} />
+    </div>
+  )
+}
+
 function App() {
-  const [section, setSection] = useState<'overview' | 'display' | 'settings' | 'labs'>('overview')
+  const [section, setSection] = useState<SectionKey>('overview')
+  const [previewOpen, setPreviewOpen] = useState(false)
   const [status, setStatus] = useState<DeviceStatus>(initialStatus)
   const [codex, setCodex] = useState<CodexStatus>({ available: false, message: '正在连接状态桥', state: '', rows: [] })
   const [text, setText] = useState('Hello from Even Glasses')
@@ -372,6 +560,19 @@ function App() {
   const rows = codex.rows ?? []
   const sweeping = isWorkingState(codex.state)
   const connectionLabel = status.connected ? '已连接' : status.connecting ? '正在连接' : '未连接'
+  const stateText = codex.state ? (stateLabels[codex.state] ?? codex.state) : '空闲'
+  const activeSection = sections.find(item => item.value === section) ?? sections[0]
+  const enabledCapabilities = (Object.entries(status.capabilities) as [keyof DeviceStatus['capabilities'], boolean][])
+    .filter(([, enabled]) => enabled)
+
+  // One line has to answer "is anything running, and what does the lens say".
+  const previewSummary = !status.connected
+    ? '眼镜未连接 · 等待任务页面发送'
+    : !rows.length
+      ? '当前没有活动页面'
+      : sweeping
+        ? `${stateText} · 状态图标正在更新 · ${rows.length} 行`
+        : `${stateText} · ${rows.length} 行`
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg">
@@ -380,13 +581,13 @@ function App() {
           title={
             <div className="flex items-center justify-center gap-2">
               <StatusDot connected={status.connected} />
-              <span className="text-[15px] tracking-[-0.15px] text-text-dim">{connectionLabel}</span>
+              <span className="text-normal-body text-text-dim">{connectionLabel}</span>
             </div>
           }
           left={
             <div className="titlebar-inset flex items-center gap-2">
               <IcStatusGlasses width={22} height={22} />
-              <span className="text-[17px] tracking-[-0.17px]">Even Glasses</span>
+              <span className="text-medium-title">Even Glasses</span>
             </div>
           }
           right={
@@ -403,311 +604,362 @@ function App() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[1240px] px-4 pt-4">
-          <Card className="mx-auto w-[610px] max-w-full">
-            <SectionHeader title="内置眼镜预览" className="mt-0" action={status.connected && sweeping ? <Loading size={20} /> : null} />
-            <p className="mb-3 text-[11px] tracking-[-0.11px] text-text-muted">
-              {!status.connected ? '眼镜未连接 · 等待任务页面发送' : rows.length ? (sweeping ? '模拟器画面 · 状态图标正在更新' : `模拟器画面 · ${rows.length} 行`) : '当前没有活动页面'}
-            </p>
-            <LensPreview />
-            <p className="mt-3 text-[11px] leading-relaxed text-text-muted">直接渲染发送给眼镜的文本、边框与 BMP 图标；无需启动外部模拟器，最终显示以真机为准。</p>
-          </Card>
-          <SegmentedControl
-            className="mt-4 w-full"
-            options={[
-              { value: 'overview', label: '概览' },
-              { value: 'display', label: '显示' },
-              { value: 'settings', label: '设备设置' },
-              { value: 'labs', label: '实验与诊断' },
-            ]}
-            value={section}
-            onValueChange={value => setSection(value as typeof section)}
+        <div className="mx-auto w-full max-w-[1180px] px-5 pt-5">
+          <LensPanel
+            open={previewOpen}
+            onToggle={() => setPreviewOpen(value => !value)}
+            summary={previewSummary}
+            state={codex.state ? stateText : ''}
+            sweeping={status.connected && sweeping}
+            rows={rows}
           />
         </div>
-        <div className="mx-auto grid w-full max-w-[1240px] grid-cols-1 items-start gap-4 px-4 pt-4 pb-8 lg:grid-cols-[280px_minmax(0,1fr)]">
-          <div className={`flex flex-col gap-4 ${section === 'settings' ? 'lg:col-span-2' : ''}`}>
-            <Card className={section === 'overview' ? '' : 'hidden'}>
-              <SectionHeader title="设备" className="mt-0" />
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <StatusDot connected={status.connected} />
-                  <span className="text-[17px] tracking-[-0.17px]">Even G2</span>
+
+        <div className="sticky top-0 z-20 mt-5 border-b border-border bg-bg/90 backdrop-blur-sm">
+          <div className="mx-auto flex w-full max-w-[1180px] items-center gap-4 px-5 py-2.5">
+            <SegmentedControl
+              className="w-full max-w-[520px]"
+              options={sections.map(item => ({ value: item.value, label: item.label }))}
+              value={section}
+              onValueChange={value => setSection(value as SectionKey)}
+            />
+            <span className="ml-auto hidden shrink-0 text-detail text-text-muted lg:block">{activeSection.hint}</span>
+          </div>
+        </div>
+
+        <div className="mx-auto w-full max-w-[1180px] px-5 pb-10 pt-5">
+          {section === 'overview' ? (
+            <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+              <Panel
+                title="设备连接"
+                hint="蓝牙连接左右镜腿；连接成功后自动同步设备参数"
+              >
+                <div className="flex items-center justify-between gap-3 rounded-[6px] bg-surface-light px-3 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <StatusDot connected={status.connected} />
+                    <span className="text-normal-title">Even G2</span>
+                  </div>
+                  <Badge variant={status.connected ? 'positive' : status.connecting ? 'neutral' : 'negative'}>{connectionLabel}</Badge>
                 </div>
-                <Badge variant={status.connected ? 'positive' : status.connecting ? 'neutral' : 'negative'}>{connectionLabel}</Badge>
-              </div>
-              <Divider className="my-3" />
-              <div className="flex flex-col gap-2 text-[15px] tracking-[-0.15px]">
-                <div className="flex items-center justify-between">
-                  <span className="text-text-dim">左臂</span>
-                  <span>{status.leftState}</span>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Tile label="左臂" value={status.leftState} />
+                  <Tile label="右臂" value={status.rightState} />
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-text-dim">右臂</span>
-                  <span>{status.rightState}</span>
-                </div>
-              </div>
-              {status.lastError ? (
-                <div className="mt-3 rounded-[6px] bg-negative-alpha px-3 py-2 text-[12px] text-negative">
-                  <p className="break-words">{status.lastError}</p>
-                  <p className="mt-1 text-[10px] opacity-70">{status.lastErrorAt || '刚刚'} · 自动重连 {status.reconnectCount} 次</p>
-                </div>
-              ) : null}
-              <div className="mt-4 flex gap-2">
-                <Button className="flex-1" disabled={busy || status.connected || status.connecting} onClick={connect}>
-                  <IcStatusBluetooth width={20} height={20} />
-                  {status.connecting ? '正在搜索' : '连接'}
-                </Button>
-                {(status.connected || status.connecting) && (
-                  <Button variant="secondary" disabled={busy} onClick={disconnect}>
-                    <IcStatusBluetoothDisconnected width={20} height={20} />
-                    断开
+                {status.lastError ? (
+                  <div className="mt-3 rounded-[6px] bg-negative-alpha px-3 py-2 text-subtitle text-negative">
+                    <p className="break-words">{status.lastError}</p>
+                    <p className="mt-1 text-detail opacity-70">{status.lastErrorAt || '刚刚'} · 自动重连 {status.reconnectCount} 次</p>
+                  </div>
+                ) : null}
+                <div className="mt-4 flex gap-2">
+                  <Button className="flex-1" disabled={busy || status.connected || status.connecting} onClick={connect}>
+                    <IcStatusBluetooth width={20} height={20} />
+                    {status.connecting ? '正在搜索' : '连接'}
                   </Button>
-                )}
-              </div>
-              {!status.connected ? (
-                <div className="mt-3 flex flex-col gap-2">
-                  <Button variant="secondary" disabled={busy} onClick={scanCandidates}>扫描并选择设备</Button>
-                  {candidates.length > 0 ? (
-                    <>
-                      <select
-                        className="h-9 rounded-[6px] border border-border bg-input-bg px-3 text-[13px]"
-                        value={selectedLeft}
-                        onChange={event => setSelectedLeft(event.target.value)}
-                      >
-                        <option value="">选择左镜腿</option>
-                        {candidates.filter(candidate => candidate.arm === 'LEFT').map(candidate => (
-                          <option key={candidate.address} value={candidate.address}>{candidate.name} · {candidate.address} · {candidate.rssi} dBm</option>
-                        ))}
-                      </select>
-                      <select
-                        className="h-9 rounded-[6px] border border-border bg-input-bg px-3 text-[13px]"
-                        value={selectedRight}
-                        onChange={event => setSelectedRight(event.target.value)}
-                      >
-                        <option value="">选择右镜腿</option>
-                        {candidates.filter(candidate => candidate.arm === 'RIGHT').map(candidate => (
-                          <option key={candidate.address} value={candidate.address}>{candidate.name} · {candidate.address} · {candidate.rssi} dBm</option>
-                        ))}
-                      </select>
-                      <Button disabled={busy || !selectedLeft || !selectedRight} onClick={connectSelected}>连接所选镜腿</Button>
-                    </>
-                  ) : null}
+                  {(status.connected || status.connecting) && (
+                    <Button variant="secondary" disabled={busy} onClick={disconnect}>
+                      <IcStatusBluetoothDisconnected width={20} height={20} />
+                      断开
+                    </Button>
+                  )}
                 </div>
-              ) : null}
-              {status.connected ? (
-                <p className="mt-3 break-all text-[11px] tracking-[-0.11px] text-text-muted">
-                  {status.deviceName || 'Even G2'} · {status.deviceId} · 麦克风{status.audioAvailable ? '可用' : '不可用'}
-                </p>
-              ) : null}
-              {status.connected ? (
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {(Object.entries(status.capabilities) as [keyof DeviceStatus['capabilities'], boolean][])
-                    .filter(([, enabled]) => enabled)
-                    .map(([name]) => <Badge key={name}>{capabilityLabels[name]}</Badge>)}
-                </div>
-              ) : null}
-            </Card>
+                {!status.connected ? (
+                  <div className="mt-3 flex flex-col gap-2">
+                    <Button variant="secondary" disabled={busy} onClick={scanCandidates}>扫描并选择设备</Button>
+                    {candidates.length > 0 ? (
+                      <div className="flex flex-col gap-2 rounded-[6px] bg-surface-light p-3">
+                        <DeviceSelect label="左镜腿" value={selectedLeft} onChange={setSelectedLeft}>
+                          <option value="">选择左镜腿</option>
+                          {candidates.filter(candidate => candidate.arm === 'LEFT').map(candidate => (
+                            <option key={candidate.address} value={candidate.address}>{candidate.name} · {candidate.address} · {candidate.rssi} dBm</option>
+                          ))}
+                        </DeviceSelect>
+                        <DeviceSelect label="右镜腿" value={selectedRight} onChange={setSelectedRight}>
+                          <option value="">选择右镜腿</option>
+                          {candidates.filter(candidate => candidate.arm === 'RIGHT').map(candidate => (
+                            <option key={candidate.address} value={candidate.address}>{candidate.name} · {candidate.address} · {candidate.rssi} dBm</option>
+                          ))}
+                        </DeviceSelect>
+                        <Button disabled={busy || !selectedLeft || !selectedRight} onClick={connectSelected}>连接所选镜腿</Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {status.connected ? (
+                  <p className="mt-3 break-all text-detail text-text-muted">
+                    {status.deviceName || 'Even G2'} · {status.deviceId} · 麦克风{status.audioAvailable ? '可用' : '不可用'}
+                  </p>
+                ) : null}
+                {status.connected && enabledCapabilities.length ? (
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {enabledCapabilities.map(([name]) => <Badge key={name}>{capabilityLabels[name]}</Badge>)}
+                  </div>
+                ) : null}
+              </Panel>
 
-            <Card className={section === 'display' ? '' : 'hidden'}>
-              <SectionHeader title="显示设置" className="mt-0" />
-              <label className="mb-2 block text-[13px] tracking-[-0.13px] text-text-dim" htmlFor="display-seconds">
-                显示时长（内容在眼镜上保留多久）
-              </label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="display-seconds"
-                  type="number"
-                  min={1}
-                  max={300}
-                  className="w-20"
-                  value={displaySeconds}
-                  onChange={event => setDisplaySeconds(Number(event.target.value))}
-                />
-                <span className="text-[15px] tracking-[-0.15px] text-text-dim">秒</span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="ml-auto"
-                  disabled={busy || displaySeconds < 1 || displaySeconds > 300}
-                  onClick={saveDisplayDuration}
+              <div className="flex flex-col gap-4">
+                <Panel
+                  title="状态桥"
+                  hint="agent hook 落盘后由本地进程轮询推送到镜片"
+                  action={<Badge variant={codex.available ? 'positive' : 'negative'}>{codex.available ? '已接入' : '未接入'}</Badge>}
                 >
-                  应用
-                </Button>
-              </div>
-              <p className="mt-2 text-[11px] tracking-[-0.11px] text-text-muted">agent 工作时不计时，状态停下来才开始倒数</p>
-              <div className="mt-4 flex flex-col gap-2">
-                <Button variant="secondary" disabled={busy || !status.connected} onClick={clearDisplay}>
-                  <IcFeatScreenOff width={20} height={20} />
-                  清空眼镜显示
-                </Button>
-                <Button variant="secondary" disabled={busy || !status.connected} onClick={calibrate}>
-                  <IcEditDisplayAdj width={20} height={20} />
-                  镜片校准
-                </Button>
-              </div>
-            </Card>
-
-            <Card className={section === 'settings' ? '' : 'hidden'}>
-              <SectionHeader title="设备参数" className="mt-0" />
-              <p className="mb-3 text-[11px] text-text-muted">连接眼镜后自动同步设备设置</p>
-              {status.settingsKnown ? (
-                <div className="mt-3 flex flex-col gap-3 text-[13px]">
-                  <div className="flex justify-between"><span className="text-text-dim">电量</span><span>{status.settings.batteryPercent}%{status.settings.charging ? ' · 充电中' : ''}</span></div>
-                  <div className="text-[11px] text-text-muted">L {status.settings.leftFirmwareVersion || '未知'} · R {status.settings.rightFirmwareVersion || '未知'}</div>
-                  <div className="flex justify-between"><span className="text-text-dim">佩戴检测</span><span>{status.settings.wearDetection ? '已佩戴' : '未佩戴'}</span></div>
-                  <div className="flex justify-between"><span className="text-text-dim">静音模式</span><span>{status.settings.silentMode ? '开启' : '关闭'}</span></div>
-                  <div className="display-adjustment-panel">
-                    <div className="display-adjustment-stage" aria-hidden="true">
-                      <span className="display-volume back" />
-                      <span className="display-volume front" />
-                      <span className="display-plane" />
-                    </div>
-                    <label className="vertical-control">
-                      <span className="vertical-control-icon">☀</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={brightness}
-                        disabled={autoBrightness}
-                        aria-label="亮度"
-                        onChange={event => setBrightness(Number(event.target.value))}
-                      />
-                      <strong>{autoBrightness ? '自动' : `${brightness}%`}</strong>
-                    </label>
+                  <p className="text-subtitle leading-relaxed text-text-dim">{codex.message}</p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <Tile label="当前状态" value={status.connected ? stateText : '—'} />
+                    <Tile label="镜片行" value={`${rows.length} 行`} hint={sweeping ? '状态图标正在更新' : undefined} />
                   </div>
-                  <label className="flex items-center gap-2"><input type="checkbox" checked={autoBrightness} onChange={event => setAutoBrightness(event.target.checked)} />自动亮度</label>
-                  <Button variant="secondary" size="sm" disabled={busy || brightness < 0 || brightness > 100} onClick={saveBrightness}>应用亮度</Button>
-                  <Divider />
-                  <label className="flex items-center gap-2"><input type="checkbox" checked={headUpEnabled} onChange={event => setHeadUpEnabled(event.target.checked)} />启用抬头显示</label>
-                  <label className="flex items-center justify-between gap-2"><span>抬头角度</span><Input type="number" min={0} max={60} className="w-20" value={headUpAngle} onChange={event => setHeadUpAngle(Number(event.target.value))} /></label>
-                  <Button variant="secondary" size="sm" disabled={busy || headUpAngle < 0 || headUpAngle > 60} onClick={saveHeadUp}>应用抬头设置</Button>
-                  <Divider />
-                  <div className="screen-position-controls">
-                    <label className="vertical-control screen-height-control">
-                      <span className="vertical-control-icon">↕</span>
-                      <input type="range" min={0} max={12} value={screenHeight} aria-label="视场高度" onChange={event => setScreenHeight(Number(event.target.value))} />
-                      <strong>{screenHeight}</strong>
-                    </label>
-                    <div className="min-w-0 flex-1">
-                      <span className="mb-2 block text-[11px] text-text-muted">视场距离</span>
-                      <SegmentedControl
-                        size="small"
-                        className="w-full"
-                        options={[
-                          { value: '0', label: '稍近' },
-                          { value: '1', label: '标准' },
-                          { value: '2', label: '稍远' },
-                        ]}
-                        value={String(screenDepth)}
-                        onValueChange={value => setScreenDepth(Number(value))}
-                      />
-                    </div>
-                  </div>
-                  <Button variant="secondary" size="sm" disabled={busy || screenHeight < 0 || screenHeight > 12 || screenDepth < 0 || screenDepth > 2} onClick={saveScreenPosition}>应用屏幕位置</Button>
-                </div>
-              ) : status.connected ? <p className="py-6 text-center text-[13px] text-text-dim">正在读取设备设置…</p> : null}
-            </Card>
+                </Panel>
 
-            <Card className={section === 'labs' ? '' : 'hidden'}>
-              <SectionHeader title="状态桥" className="mt-0" />
-              <Badge variant={codex.available ? 'positive' : 'negative'}>{codex.available ? '已接入' : '未接入'}</Badge>
-              <p className="mt-3 text-[13px] leading-relaxed tracking-[-0.13px] text-text-dim">{codex.message}</p>
-              <Divider className="my-3" />
-              <div className="flex flex-col gap-2 text-[12px] text-text-dim">
-                <div className="flex justify-between"><span>连接状态</span><span>{connectionLabel}</span></div>
-                <div className="flex justify-between"><span>自动重连</span><span>{status.reconnectCount} 次</span></div>
-                <div className="flex justify-between"><span>最近异常</span><span>{status.lastErrorAt || '无'}</span></div>
-              </div>
-              {status.lastError ? <p className="mt-3 break-words rounded-[6px] bg-negative-alpha px-3 py-2 text-[11px] text-negative">{status.lastError}</p> : null}
-            </Card>
-          </div>
-
-          <div className={`flex flex-col gap-4 ${section === 'settings' ? 'hidden' : ''}`}>
-            <Card className={section === 'display' ? '' : 'hidden'}>
-              <SectionHeader title="发送到眼镜" className="mt-0" />
-              <SegmentedControl
-                size="small"
-                className="mb-3 w-full"
-                options={[
-                  { value: 'native', label: '原生文本' },
-                  { value: 'teleprompter', label: '提词器' },
-                ]}
-                value={mode}
-                onValueChange={value => setMode(value as 'native' | 'teleprompter')}
-              />
-              <Textarea rows={6} value={text} onChange={event => setText(event.target.value)} placeholder="输入要显示的内容" />
-              <p className="mt-2 text-[11px] tracking-[-0.11px] text-text-muted">
-                原生文本填满右侧文本容器；提词器走 25 列 × 10 行的长文分页通道，18 秒后自动回落。
-              </p>
-              <Button className="mt-3 w-full" disabled={busy || !status.connected || !text.trim()} onClick={sendText}>
-                发送文本
-              </Button>
-            </Card>
-
-            <Card className={section === 'display' ? '' : 'hidden'}>
-              <SectionHeader title="原生列表" className="mt-0" />
-              <p className="mb-3 text-[13px] tracking-[-0.13px] text-text-dim">每行一个项目，可在眼镜端点按选中。</p>
-              <Textarea rows={5} value={list} onChange={event => setList(event.target.value)} placeholder="每行一个项目" />
-              <Button variant="secondary" className="mt-3 w-full" disabled={busy || !status.connected} onClick={sendList}>
-                发送列表
-              </Button>
-            </Card>
-
-            <Card className={section === 'display' ? '' : 'hidden'}>
-              <SectionHeader title="图片" className="mt-0" />
-              <p className="mb-3 text-[13px] text-text-dim">PNG/JPEG 会自动适配 576×288，并转换为眼镜的 4-bit 灰度图。</p>
-              <label className="flex min-h-24 cursor-pointer items-center justify-center rounded-[6px] border border-dashed border-border bg-input-bg px-4 text-center text-[13px] text-text-dim">
-                <input className="hidden" type="file" accept="image/png,image/jpeg" onChange={event => chooseImage(event.target.files?.[0])} />
-                {imageName || '选择 PNG 或 JPEG 图片'}
-              </label>
-              <Button className="mt-3 w-full" disabled={busy || !status.connected || !imageData} onClick={sendImage}>发送图片</Button>
-            </Card>
-
-            <Card className={section === 'overview' ? '' : 'hidden'}>
-              <SectionHeader title="输入与麦克风" className="mt-0" />
-              <div className="flex gap-2">
-                <Button className="flex-1" disabled={busy || !status.connected || !status.audioAvailable || status.audioActive} onClick={startMicrophone}>开始录音</Button>
-                <Button variant="secondary" className="flex-1" disabled={busy || !status.audioActive} onClick={stopMicrophone}>停止录音</Button>
-              </div>
-              <p className="mt-2 text-[11px] text-text-muted">
-                LC3 帧 {status.audioFrames} · {(status.audioBytes / 1024).toFixed(1)} KiB
-              </p>
-              <Divider className="my-3" />
-              {status.lastEvent.kind ? (
-                <div className="text-[13px] leading-relaxed text-text-dim">
-                  <div>{status.lastEvent.kind} · {status.lastEvent.type}</div>
-                  <div>{status.lastEvent.name || '系统事件'}{status.lastEvent.itemName ? ` · ${status.lastEvent.itemName} #${status.lastEvent.itemIndex}` : ''}</div>
-                </div>
-              ) : <p className="text-[13px] text-text-muted">尚未收到眼镜输入事件</p>}
-            </Card>
-
-            <Card className={section === 'labs' ? '' : 'hidden'}>
-              <SectionHeader title="Dashboard" className="mt-0" />
-              <Button className="w-full" disabled={busy || !status.connected} onClick={showDashboard}>恢复原生 Dashboard</Button>
-              <label className="mt-3 flex items-center gap-2 text-[13px]"><input type="checkbox" checked={dashboardExperimental} onChange={event => setDashboardExperimental(event.target.checked)} />启用实验功能</label>
-              {dashboardExperimental ? (
-                <div className="mt-3 flex flex-col gap-2">
-                  <label className="flex items-center gap-2 text-[13px]"><input type="checkbox" checked={dashboardHalfDay} onChange={event => setDashboardHalfDay(event.target.checked)} />12 小时制</label>
-                  <label className="flex items-center gap-2 text-[13px]"><input type="checkbox" checked={dashboardCelsius} onChange={event => setDashboardCelsius(event.target.checked)} />摄氏温度</label>
-                  <Button variant="secondary" disabled={busy || !status.connected} onClick={configureDashboard}>应用默认组件排序</Button>
-                  <Textarea rows={4} value={scheduleJSON} onChange={event => setScheduleJSON(event.target.value)} />
+                <Panel title="输入与麦克风" hint="眼镜端只有列表点按、上下滑和双击，没有长按或多键">
                   <div className="flex gap-2">
-                    <Button variant="secondary" className="flex-1" disabled={busy || !status.connected} onClick={pushSchedule}>写入日程</Button>
-                    <Button variant="secondary" className="flex-1" disabled={busy || !status.connected} onClick={clearSchedule}>清空日程</Button>
+                    <Button className="flex-1" disabled={busy || !status.connected || !status.audioAvailable || status.audioActive} onClick={startMicrophone}>开始录音</Button>
+                    <Button variant="secondary" className="flex-1" disabled={busy || !status.audioActive} onClick={stopMicrophone}>停止录音</Button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <Tile label="LC3 帧" value={status.audioFrames} />
+                    <Tile label="音频数据" value={`${(status.audioBytes / 1024).toFixed(1)} KiB`} />
+                  </div>
+                  <Divider className="my-3" />
+                  {status.lastEvent.kind ? (
+                    <div className="text-subtitle leading-relaxed text-text-dim">
+                      <div>{status.lastEvent.kind} · {status.lastEvent.type}</div>
+                      <div>{status.lastEvent.name || '系统事件'}{status.lastEvent.itemName ? ` · ${status.lastEvent.itemName} #${status.lastEvent.itemIndex}` : ''}</div>
+                    </div>
+                  ) : <p className="text-subtitle text-text-muted">尚未收到眼镜输入事件</p>}
+                </Panel>
+              </div>
+            </div>
+          ) : null}
+
+          {section === 'display' ? (
+            <div className="grid items-start gap-4 lg:grid-cols-2">
+              <div className="flex flex-col gap-4">
+                <Panel
+                  title="发送文本"
+                  hint="原生文本填满整块镜片；提词器走 25 列 × 10 行的长文分页通道，18 秒后回落"
+                >
+                  <SegmentedControl
+                    size="small"
+                    className="mb-3 w-full"
+                    options={[
+                      { value: 'native', label: '原生文本' },
+                      { value: 'teleprompter', label: '提词器' },
+                    ]}
+                    value={mode}
+                    onValueChange={value => setMode(value as 'native' | 'teleprompter')}
+                  />
+                  <Textarea rows={7} value={text} onChange={event => setText(event.target.value)} placeholder="输入要显示的内容" />
+                  <Button className="mt-3 w-full" disabled={busy || !status.connected || !text.trim()} onClick={sendText}>
+                    发送文本
+                  </Button>
+                </Panel>
+
+                <Panel title="页面时长与快捷操作" hint="agent 工作时不计时，状态停下来才开始倒数">
+                  <label className="mb-2 block text-detail text-text-dim" htmlFor="display-seconds">
+                    内容在眼镜上保留多久
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="display-seconds"
+                      type="number"
+                      min={1}
+                      max={300}
+                      className="h-9 w-24 text-subtitle"
+                      value={displaySeconds}
+                      onChange={event => setDisplaySeconds(Number(event.target.value))}
+                    />
+                    <span className="text-subtitle text-text-dim">秒</span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="ml-auto"
+                      disabled={busy || displaySeconds < 1 || displaySeconds > 300}
+                      onClick={saveDisplayDuration}
+                    >
+                      应用
+                    </Button>
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2">
+                    <Button variant="secondary" disabled={busy || !status.connected} onClick={clearDisplay}>
+                      <IcFeatScreenOff width={20} height={20} />
+                      清空眼镜显示
+                    </Button>
+                    <Button variant="secondary" disabled={busy || !status.connected} onClick={calibrate}>
+                      <IcEditDisplayAdj width={20} height={20} />
+                      镜片校准
+                    </Button>
+                  </div>
+                </Panel>
+              </div>
+
+              <div className="flex flex-col gap-4">
+                <Panel title="原生列表" hint="每行一个项目，可在眼镜端按选中那行">
+                  <Textarea rows={5} value={list} onChange={event => setList(event.target.value)} placeholder="每行一个项目" />
+                  <Button variant="secondary" className="mt-3 w-full" disabled={busy || !status.connected} onClick={sendList}>
+                    发送列表
+                  </Button>
+                </Panel>
+
+                <Panel title="图片" hint="PNG / JPEG 自动适配 576×288，并转换为眼镜的 4-bit 灰度图">
+                  <label className="flex min-h-[168px] cursor-pointer items-center justify-center rounded-[6px] border border-dashed border-border bg-input-bg px-4 text-center text-subtitle text-text-dim transition-colors hover:bg-surface-light">
+                    <input className="hidden" type="file" accept="image/png,image/jpeg" onChange={event => chooseImage(event.target.files?.[0])} />
+                    {imageName || '选择 PNG 或 JPEG 图片'}
+                  </label>
+                  <Button className="mt-3 w-full" disabled={busy || !status.connected || !imageData} onClick={sendImage}>发送图片</Button>
+                </Panel>
+              </div>
+            </div>
+          ) : null}
+
+          {section === 'settings' ? (
+            <div className="grid items-start gap-4 lg:grid-cols-2">
+              <div className="flex flex-col gap-4">
+              <Panel title="亮度" hint="关闭自动亮度后才能手动拖动；应用后重新读取设备参数">
+                <div className="display-adjustment-panel">
+                  <div className="display-adjustment-stage" aria-hidden="true">
+                    <span className="display-volume back" />
+                    <span className="display-volume front" />
+                    <span className="display-plane" />
+                  </div>
+                  <label className="vertical-control">
+                    <span className="vertical-control-icon">☀</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={brightness}
+                      disabled={autoBrightness}
+                      aria-label="亮度"
+                      onChange={event => setBrightness(Number(event.target.value))}
+                    />
+                    <strong>{autoBrightness ? '自动' : `${brightness}%`}</strong>
+                  </label>
+                </div>
+                <div className="mt-3">
+                  <SwitchRow label="自动亮度" checked={autoBrightness} onChange={setAutoBrightness} />
+                </div>
+                <Button variant="secondary" size="sm" className="mt-2 w-full" disabled={busy || brightness < 0 || brightness > 100} onClick={saveBrightness}>应用亮度</Button>
+              </Panel>
+
+              <Panel title="抬头显示" hint="抬起头部后把当前页面重新推到眼前">
+                <SwitchRow label="启用抬头显示" checked={headUpEnabled} onChange={setHeadUpEnabled} />
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <span className="text-subtitle text-text-dim">抬头角度</span>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min={0}
+                      max={60}
+                      className="h-9 w-24 text-subtitle"
+                      value={headUpAngle}
+                      onChange={event => setHeadUpAngle(Number(event.target.value))}
+                    />
+                    <span className="text-subtitle text-text-dim">度</span>
                   </div>
                 </div>
-              ) : null}
-            </Card>
-          </div>
+                <Button variant="secondary" size="sm" className="mt-3 w-full" disabled={busy || headUpAngle < 0 || headUpAngle > 60} onClick={saveHeadUp}>应用抬头设置</Button>
+              </Panel>
+              </div>
 
+              <div className="flex flex-col gap-4">
+              <Panel title="屏幕位置" hint="视场高度与距离共同决定投放位置，改完以真机观感为准">
+                <div className="screen-position-controls">
+                  <label className="vertical-control screen-height-control">
+                    <span className="vertical-control-icon">↕</span>
+                    <input type="range" min={0} max={12} value={screenHeight} aria-label="视场高度" onChange={event => setScreenHeight(Number(event.target.value))} />
+                    <strong>{screenHeight}</strong>
+                  </label>
+                  <div className="min-w-0 flex-1">
+                    <span className="mb-2 block text-detail text-text-muted">视场距离</span>
+                    <SegmentedControl
+                      size="small"
+                      className="w-full"
+                      options={[
+                        { value: '0', label: '稍近' },
+                        { value: '1', label: '标准' },
+                        { value: '2', label: '稍远' },
+                      ]}
+                      value={String(screenDepth)}
+                      onValueChange={value => setScreenDepth(Number(value))}
+                    />
+                    <p className="mt-3 text-detail leading-relaxed text-text-muted">只改这里不会立刻生效，需要点下面的应用按钮。</p>
+                  </div>
+                </div>
+                <Button variant="secondary" size="sm" className="mt-3 w-full" disabled={busy || screenHeight < 0 || screenHeight > 12 || screenDepth < 0 || screenDepth > 2} onClick={saveScreenPosition}>应用屏幕位置</Button>
+              </Panel>
+
+              <Panel title="设备参数" hint="连接眼镜后自动同步，这里是最近一次读到的值">
+                {status.settingsKnown ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Tile label="电量" value={`${status.settings.batteryPercent}%`} hint={status.settings.charging ? '充电中' : undefined} />
+                      <Tile label="佩戴检测" value={status.settings.wearDetection ? '已佩戴' : '未佩戴'} />
+                      <Tile label="静音模式" value={status.settings.silentMode ? '开启' : '关闭'} />
+                      <Tile label="固件" value={`L ${status.settings.leftFirmwareVersion || '未知'}`} hint={`R ${status.settings.rightFirmwareVersion || '未知'}`} />
+                    </div>
+                    <Divider className="my-3" />
+                    <div className="flex flex-col gap-2 text-subtitle text-text-dim">
+                      <div className="flex justify-between"><span>设备名</span><span className="text-text">{status.deviceName || 'Even G2'}</span></div>
+                      <div className="flex justify-between gap-4"><span className="shrink-0">设备 ID</span><span className="break-all text-right text-text">{status.deviceId || '—'}</span></div>
+                    </div>
+                  </>
+                ) : status.connected ? (
+                  <p className="py-6 text-center text-subtitle text-text-dim">正在读取设备设置…</p>
+                ) : (
+                  <p className="py-6 text-center text-subtitle text-text-muted">连接眼镜后显示</p>
+                )}
+              </Panel>
+              </div>
+            </div>
+          ) : null}
+
+          {section === 'labs' ? (
+            <div className="grid items-start gap-4 lg:grid-cols-2">
+              <Panel title="Dashboard" hint="恢复眼镜自带的信息页；实验开关会影响组件排序与单位">
+                <Button className="w-full" disabled={busy || !status.connected} onClick={showDashboard}>恢复原生 Dashboard</Button>
+                <Divider className="my-3" />
+                <SwitchRow label="启用实验功能" checked={dashboardExperimental} onChange={setDashboardExperimental} />
+                {dashboardExperimental ? (
+                  <div className="mt-3 flex flex-col gap-2">
+                    <SwitchRow label="12 小时制" checked={dashboardHalfDay} onChange={setDashboardHalfDay} />
+                    <SwitchRow label="摄氏温度" checked={dashboardCelsius} onChange={setDashboardCelsius} />
+                    <Button variant="secondary" className="mt-1" disabled={busy || !status.connected} onClick={configureDashboard}>应用默认组件排序</Button>
+                    <Textarea rows={4} value={scheduleJSON} onChange={event => setScheduleJSON(event.target.value)} />
+                    <div className="flex gap-2">
+                      <Button variant="secondary" className="flex-1" disabled={busy || !status.connected} onClick={pushSchedule}>写入日程</Button>
+                      <Button variant="secondary" className="flex-1" disabled={busy || !status.connected} onClick={clearSchedule}>清空日程</Button>
+                    </div>
+                  </div>
+                ) : null}
+              </Panel>
+
+              <Panel title="连接诊断" hint="自动重连与最近一次异常的原始信息">
+                <div className="grid grid-cols-3 gap-2">
+                  <Tile label="连接状态" value={connectionLabel} />
+                  <Tile label="自动重连" value={`${status.reconnectCount} 次`} />
+                  <Tile label="最近异常" value={status.lastErrorAt || '无'} hint={status.lastError || undefined} />
+                </div>
+                {status.lastError ? (
+                  <p className="mt-3 break-words rounded-[6px] bg-negative-alpha px-3 py-2 text-detail text-negative">{status.lastError}</p>
+                ) : null}
+              </Panel>
+
+              <Panel title="状态桥原始输出" hint="镜片行就是这里返回的内容，排查排版时可以直接对照" className="lg:col-span-2">
+                <div className="flex items-center gap-3">
+                  <Badge variant={codex.available ? 'positive' : 'negative'}>{codex.available ? '已接入' : '未接入'}</Badge>
+                  <span className="text-detail text-text-muted">状态 {codex.state || '（空）'} · {rows.length} 行</span>
+                </div>
+                <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-[6px] bg-surface-light p-3 font-mono text-detail leading-[1.7] text-text-dim">{rows.join('\n') || '（没有推送内容）'}</pre>
+              </Panel>
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-border">
-        <div className="flex items-center justify-between px-4 py-2 text-[13px] tracking-[-0.13px]">
-          <span className={notice.error ? 'text-negative' : 'text-text-dim'}>{notice.text}</span>
-          <span className="text-text-muted">v0.2.0-rc.1 · even-g2-go</span>
+      <div className="shrink-0 border-t border-border bg-surface">
+        <div className="mx-auto flex w-full max-w-[1180px] items-center justify-between gap-4 px-5 py-2 text-subtitle">
+          <span className={`truncate ${notice.error ? 'text-negative' : 'text-text-dim'}`}>{notice.text}</span>
+          <span className="shrink-0 text-detail text-text-muted">v0.2.0-rc.1 · even-g2-go</span>
         </div>
       </div>
     </div>

@@ -212,13 +212,13 @@ func TestStatusMonitorPublishesGlassesRows(t *testing.T) {
 	if rows[1] != lens.User+"把改动文件推给眼镜" {
 		t.Fatalf("status row = %q", rows[1])
 	}
-	if !strings.HasPrefix(rows[2], lens.Header+"● 正在执行  ·  --:--") {
+	if !strings.HasPrefix(rows[2], lens.Header+"●  正在执行  ·  --:--") {
 		t.Fatalf("status row = %q", rows[2])
 	}
 	if rows[3] != lens.Live+"正在运行命令 go test ./..." {
 		t.Fatalf("activity summary = %q", rows[3])
 	}
-	if rows[4] != lens.Header+"────────────────────" {
+	if rows[4] != dividerRow {
 		t.Fatalf("activity divider = %q", rows[3])
 	}
 	if !strings.HasPrefix(rows[5], lens.Step+"statusmonitor.go") || !strings.HasSuffix(rows[5], "● M") {

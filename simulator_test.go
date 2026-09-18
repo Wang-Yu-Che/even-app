@@ -47,7 +47,7 @@ func TestSimulatorNativeList(t *testing.T) {
 	if err := json.Unmarshal([]byte(encoded), &page); err != nil {
 		t.Fatal(err)
 	}
-	wantItemWidth := style.Width - 2*(style.BorderWidth+style.PaddingLength)
+	wantItemWidth := style.ListItemWidth
 	if page.List == nil || !page.List.SelectBorder || len(page.List.Items) != 2 || page.List.ItemWidth != wantItemWidth || page.Style != style || page.Style.BorderWidth != 1 || page.Icon != nil {
 		t.Fatalf("list: %+v", page)
 	}

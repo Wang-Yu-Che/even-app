@@ -312,7 +312,7 @@ func (s *EvenService) ConnectDevice(leftAddress, rightAddress string) (DeviceSta
 
 // startConnection starts the client-owned initial connection loop. The SDK's
 // AutoReconnect takes over after the first successful connection; this loop
-// keeps retrying a remembered pair, or scans until the first pair is known.
+// scans nearby devices until one left/right pair is found and connects it.
 func (s *EvenService) startConnection() {
 	s.mu.Lock()
 	if s.client != nil || s.connecting {
@@ -331,50 +331,6 @@ func (s *EvenService) startConnection() {
 }
 
 func (s *EvenService) connectUntilReady(ctx context.Context, generation uint64) {
-	s.mu.Lock()
-	cached := s.cachedDevice
-	s.mu.Unlock()
-	for cached != nil {
-		connectCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		client, err := g2.ConnectDevice(connectCtx, *cached, g2.ConnectOptions{
-			Debug: os.Getenv("EVEN_MENU_DEBUG") == "1", Output: os.Stderr,
-			AutoReconnect: true, ReconnectDelay: time.Second,
-		})
-		cancel()
-		if err == nil {
-			s.mu.Lock()
-			if generation != s.connectGeneration || ctx.Err() != nil {
-				s.mu.Unlock()
-				_ = client.Close()
-				return
-			}
-			s.client = client
-			s.startEventSubscriptionLocked(client)
-			s.connecting = false
-			s.lastConnectError = ""
-			s.mu.Unlock()
-			s.startDeviceSettingsSync(client)
-			return
-		}
-
-		if ctx.Err() != nil {
-			return
-		}
-		s.mu.Lock()
-		if generation == s.connectGeneration {
-			s.lastConnectError = fmt.Sprintf("已配对设备暂时不可用，正在快速重连：%v", err)
-		}
-		s.mu.Unlock()
-
-		timer := time.NewTimer(2 * time.Second)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-	}
-
 	for {
 		client, err := g2.Connect(ctx, g2.ConnectOptions{
 			Debug: os.Getenv("EVEN_MENU_DEBUG") == "1", Output: os.Stderr,
@@ -1133,6 +1089,13 @@ func agentPageStyle(state string) g2.TextStyle {
 		return g2.TextStyle{
 			X: completionCardX, Y: completionCardY, Width: completionCardWidth, Height: completionCardHeight,
 			BorderWidth: 2, BorderColor: 15, BorderRadius: 10, PaddingLength: 16,
+		}
+	}
+	if isAgentList(state) {
+		return g2.TextStyle{
+			X: 20, Y: 14, Width: 536, Height: 260,
+			BorderWidth: 1, BorderColor: 7, BorderRadius: 6, PaddingLength: 12,
+			ListItemWidth: listItemWidth,
 		}
 	}
 	return g2.TextStyle{

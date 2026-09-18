@@ -157,6 +157,9 @@ func (s *officialSimulator) setList(rows []string, style g2.TextStyle) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	itemWidth := style.Width - 2*(style.BorderWidth+style.PaddingLength)
+	if style.ListItemWidth > 0 {
+		itemWidth = style.ListItemWidth
+	}
 	s.page = simulatorPage{
 		Style: style,
 		List:  &simulatorList{Items: append([]string(nil), rows...), ItemWidth: itemWidth, SelectBorder: true},

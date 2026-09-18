@@ -9,7 +9,6 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
-	"github.com/wailsapp/wails/v3/pkg/icons"
 )
 
 // Wails uses Go's `embed` package to embed the frontend files into the binary.
@@ -19,6 +18,9 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+//go:embed build/systray-glasses-template.png
+var systrayGlassesTemplate []byte
 
 func init() {
 }
@@ -79,7 +81,7 @@ func main() {
 
 	tray := app.SystemTray.New()
 	if runtime.GOOS == "darwin" {
-		tray.SetTemplateIcon(icons.SystrayMacTemplate)
+		tray.SetTemplateIcon(systrayGlassesTemplate)
 	}
 	tray.SetTooltip("Even Glasses · 眼镜显示")
 

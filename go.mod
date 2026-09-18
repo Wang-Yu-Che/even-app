@@ -1,4 +1,4 @@
-module changeme
+module even-glasses
 
 go 1.25.0
 

@@ -13,7 +13,7 @@ func TestProjectRowsRespectByteAndPixelLimits(t *testing.T) {
 		for _, state := range []string{"working", "done"} {
 			rows, keys := composeProjectRows([]agentSession{{record: agentStateRecord{Project: project, State: state}}})
 			line := rows[0]
-			if !utf8.ValidString(line) || len(line) > 63 || textUnits(line) > lensUnits {
+			if !utf8.ValidString(line) || len(line) > 63 || textUnits(line) > listUnits {
 				t.Fatalf("invalid row: %q (%d bytes, %d pixels)", line, len(line), textUnits(line))
 			}
 			if !strings.HasPrefix(line, "▶ ") || keys[0] != "project:"+project {
@@ -23,13 +23,24 @@ func TestProjectRowsRespectByteAndPixelLimits(t *testing.T) {
 				if !strings.HasSuffix(line, "  ●") {
 					t.Fatalf("missing activity marker: %q", line)
 				}
-				if len(line) < 63 && textUnits(line)+characterUnits(' ') <= lensUnits {
+				if len(line) < 63 && textUnits(line)+characterUnits(' ') <= listUnits {
 					t.Fatalf("activity marker could move farther right: %q", line)
 				}
 			} else if strings.HasSuffix(line, "●") {
 				t.Fatalf("inactive project has activity marker: %q", line)
 			}
 		}
+	}
+}
+
+func TestSessionRowsUseFullListWidthForTitle(t *testing.T) {
+	title := strings.Repeat("很长的会话标题", 12)
+	source := statusSource{Agent: "codex", Label: "Codex"}
+	rows, _ := composeSessionRows([]agentSession{{source: source, record: agentStateRecord{Title: title, State: "done"}}})
+	suffix := " · Codex · " + strings.TrimSpace(liveRow(agentStateRecord{State: "done"}))
+	want := truncateUnits(title, listUnits-textUnits(suffix)) + suffix
+	if len(rows) != 1 || rows[0] != want || textUnits(rows[0]) > listUnits {
+		t.Fatalf("session row = %q, want %q within %dpx", rows[0], want, listUnits)
 	}
 }
 
@@ -71,9 +82,9 @@ func TestComposeAgentRowsRendersTheWorkingSession(t *testing.T) {
 	want := []string{
 		sessionPrompt + "WorkBuddy · even-app",
 		lens.User + "把改动文件推给眼镜",
-		lens.Header + "● 正在执行  ·  2:14  ·  2F +597 -38",
+		lens.Header + "●  正在执行  ·  2:14  ·  2F +597 -38",
 		lens.Live + "正在运行命令 go build ./...",
-		lens.Header + "────────────────────",
+		dividerRow,
 		lens.Step + "statusmonitor.go                                 ● M +12 -3",
 		commandPrompt + "go build ./...",
 	}
@@ -132,7 +143,7 @@ func TestComposeAgentRowsKeepsInformationOrderFixed(t *testing.T) {
 	steps := []agentStreamStep{{Kind: "tool", Tool: "Read", Status: "ok", Text: "main.go"}}
 	rows := composeAgentRows(sampleSource(), record, steps, viewNow)
 
-	prefixes := []string{sessionPrompt + "WorkBuddy · even-app", lens.Header + "● ", lens.Live + "正在查看目录", lens.Header + "─"}
+	prefixes := []string{sessionPrompt + "WorkBuddy · even-app", lens.Header + "● ", lens.Live + "正在查看目录", lens.Header + " ─"}
 	for index, prefix := range prefixes {
 		if !strings.HasPrefix(rows[index], prefix) {
 			t.Fatalf("row %d = %q, want prefix %q", index, rows[index], prefix)

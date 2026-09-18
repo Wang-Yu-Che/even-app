@@ -198,6 +198,14 @@ func TestTerminalLayoutKeepsOuterFrame(t *testing.T) {
 	}
 }
 
+func TestListFrameFitsRowBudget(t *testing.T) {
+	list := agentPageStyle("sessions")
+	terminal := agentPageStyle("tool")
+	if list.X != terminal.X || list.Width != terminal.Width || list.ListItemWidth != listItemWidth {
+		t.Fatalf("list style = %+v, terminal style = %+v", list, terminal)
+	}
+}
+
 func TestCompletionLayoutKeepsOuterFrame(t *testing.T) {
 	style := agentPageStyle("done")
 	if style.BorderWidth != 2 || style.BorderColor != 15 || style.BorderRadius != 10 || style.PaddingLength != 16 {

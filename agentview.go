@@ -12,6 +12,8 @@ const (
 	asciiUnits         = 10
 	cjkUnits           = 20
 	lensUnits          = 464
+	listUnits          = 376
+	listItemWidth      = listUnits + 24
 	maxRows            = 8
 	nativeListPageSize = 6
 	streamReadLimit    = 12
@@ -54,6 +56,15 @@ var lens = lensStyle{
 	Ellipsis: "…",
 }
 
+// dividerRow is the rule between the session head and the file/step list.
+//
+// It carries one more half-width space than a marker row, so the rule hangs off
+// the session identity instead of starting on the marker column: G2 draws 【
+// with a left side bearing wide enough that the header's ink lands about a cell
+// right of every other row's box, and a rule on the marker column reads as
+// poking out past the heading it belongs to.
+var dividerRow = lens.Header + " " + strings.Repeat("─", 22)
+
 // composeAgentRows renders one compact terminal transcript for a session.
 func composeAgentRows(source statusSource, record agentStateRecord, steps []agentStreamStep, now time.Time) []string {
 	if record.State == "done" {
@@ -69,7 +80,7 @@ func composeAgentRows(source statusSource, record agentStateRecord, steps []agen
 	}
 	activity := activityRows(steps, record, 3)
 	if len(activity) > 0 {
-		rows = append(rows, lens.Header+"────────────────────")
+		rows = append(rows, dividerRow)
 		rows = append(rows, activity...)
 	}
 	return rows
@@ -143,7 +154,12 @@ func statusSummaryRow(record agentStateRecord, now time.Time) string {
 	} else if record.State == "needs_input" || record.State == "permission" || record.State == "paused" {
 		prefix = "□"
 	}
-	summary := prefix + " " + status + "  ·  " + elapsed
+	// Every marker row follows its glyph with two spaces, which is what puts the
+	// bodies of the marked rows on one column. This row picks its glyph from the
+	// state rather than from the vocabulary, so it has to spell that padding out
+	// itself — with a single space its body sat half a cell left of the rows
+	// above and below it on the lens.
+	summary := prefix + "  " + status + "  ·  " + elapsed
 	if record.FileCount > 0 {
 		summary += fmt.Sprintf("  ·  %dF +%d -%d", record.FileCount, record.Additions, record.Deletions)
 	} else if record.ChangeCount > 0 {
@@ -767,7 +783,7 @@ func composeProjectRows(sessions []agentSession) ([]string, []string) {
 		if active[project] {
 			reserved += "  ●"
 		}
-		name := truncateUnits(project, lensUnits-textUnits(reserved))
+		name := truncateUnits(project, listUnits-textUnits(reserved))
 		byteBudget := 63 - len(reserved)
 		if len(name) > byteBudget {
 			end := 0
@@ -781,7 +797,7 @@ func composeProjectRows(sessions []agentSession) ([]string, []string) {
 		}
 		prefix := "▶ " + name
 		if active[project] {
-			gap := max(2, (lensUnits-textUnits(prefix)-textUnits("●"))/characterUnits(' '))
+			gap := max(2, (listUnits-textUnits(prefix)-textUnits("●"))/characterUnits(' '))
 			// List items allow at most 63 UTF-8 bytes, including alignment spaces.
 			gap = min(gap, 63-len(prefix)-len("●"))
 			rows[index] = prefix + strings.Repeat(" ", gap) + "●"
@@ -816,11 +832,13 @@ func composeSessionRows(sessions []agentSession) ([]string, []string) {
 		}
 		name = strings.Join(strings.Fields(name), " ")
 		status := strings.TrimSpace(liveRow(agentStateRecord{State: item.record.State}))
-		label := row("", truncateUnits(name, 120)+" · "+item.source.Label+" · "+status)
-		runes := []rune(label)
-		if len(runes) > 64 {
-			label = string(runes[:63]) + "…"
+		suffix := " · " + item.source.Label + " · " + status
+		nameRunes := []rune(name)
+		maxNameRunes := 64 - len([]rune(suffix))
+		if len(nameRunes) > maxNameRunes {
+			name = string(nameRunes[:maxNameRunes-1]) + lens.Ellipsis
 		}
+		label := truncateUnits(name, listUnits-textUnits(suffix)) + suffix
 		rows = append(rows, label)
 		keys = append(keys, item.key)
 	}

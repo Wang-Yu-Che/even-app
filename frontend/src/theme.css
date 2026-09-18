@@ -275,3 +275,108 @@ body {
   text-align: center;
   overflow-wrap: anywhere;
 }
+
+/* ---------------------------------------------------------------- 折叠预览 */
+/*
+ * The preview card is folded by default, so the header strip is the whole card
+ * most of the time. It stays clickable edge to edge, and the chevron is the only
+ * affordance that costs nothing when the card is shut.
+ */
+.lens-fold-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.lens-fold-head:hover {
+  background: var(--color-surface-light);
+}
+
+/* Echoes the lens itself: near-black glass with the green the framebuffer uses. */
+.lens-mark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #080b09;
+  color: #9bff9f;
+  box-shadow: inset 0 0 0 1px #1d2c1f;
+}
+
+.lens-fold-chevron {
+  flex-shrink: 0;
+  color: var(--color-text-dim);
+  transition: transform 180ms ease;
+}
+
+.lens-fold-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+/* Canvas keeps its native 576×288; the row list takes the rest of the width. */
+.lens-fold-body {
+  display: grid;
+  grid-template-columns: minmax(0, 576px) minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+  padding: 14px;
+  border-top: 1px solid var(--color-border);
+}
+
+@media (max-width: 1040px) {
+  .lens-fold-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.lens-rows {
+  max-height: 318px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--color-surface-light);
+  list-style: none;
+  overflow: auto;
+}
+
+.lens-rows-empty {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  letter-spacing: -0.11px;
+}
+
+.lens-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* Monospaced so a row that is one character too wide is visible at a glance. */
+.lens-row-index {
+  flex-shrink: 0;
+  width: 14px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 19px;
+  text-align: right;
+}
+
+.lens-row-text {
+  min-width: 0;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 19px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
