@@ -372,6 +372,7 @@ function App() {
   const rows = codex.rows ?? []
   const sweeping = isWorkingState(codex.state)
   const connectionLabel = status.connected ? '已连接' : status.connecting ? '正在连接' : '未连接'
+
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg">
       <div className="window-drag shrink-0">
@@ -404,13 +405,9 @@ function App() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1240px] px-4 pt-4">
           <Card className="mx-auto w-[610px] max-w-full">
-            <SectionHeader
-              title="内置眼镜预览"
-              className="mt-0"
-              action={status.connected && sweeping ? <Loading size={20} /> : null}
-            />
+            <SectionHeader title="内置眼镜预览" className="mt-0" action={status.connected && sweeping ? <Loading size={20} /> : null} />
             <p className="mb-3 text-[11px] tracking-[-0.11px] text-text-muted">
-              {!status.connected ? '眼镜未连接' : rows.length ? (sweeping ? '状态图标正在更新' : `${rows.length} 行`) : '当前没有活动页面'}
+              {!status.connected ? '眼镜未连接 · 等待任务页面发送' : rows.length ? (sweeping ? '模拟器画面 · 状态图标正在更新' : `模拟器画面 · ${rows.length} 行`) : '当前没有活动页面'}
             </p>
             <LensPreview />
             <p className="mt-3 text-[11px] leading-relaxed text-text-muted">直接渲染发送给眼镜的文本、边框与 BMP 图标；无需启动外部模拟器，最终显示以真机为准。</p>

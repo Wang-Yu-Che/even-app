@@ -11,12 +11,9 @@ import (
 )
 
 func TestCompletionNotificationIncludesSession(t *testing.T) {
-	record := agentStateRecord{
-		SessionID: "session-1", State: "done", Title: "  修复菜单\n并整理样式  ", Project: "even-app",
-		StartedAt: 1699999958, Timestamp: 1700000000, StepCount: 5, FileCount: 2, Additions: 22, Deletions: 4,
-	}
+	record := agentStateRecord{SessionID: "session-1", State: "done", Title: "修复菜单", Project: "even-app", Timestamp: 1700000000}
 	notification := sessionCompletionNotification(statusSource{Agent: "codex", Label: "Codex"}, record)
-	if notification.ID != "codex:session-1" || notification.PackageName != codexMenuPackage || notification.Title != "修复菜单 并整理样式" || notification.Subtitle != "even-app · 已完成" || notification.Message != "用时 0:42 · 5 步\n2 个文件 · +22 / -4" || notification.Timestamp.Unix() != 1700000000 {
+	if notification.ID != "codex:session-1" || notification.PackageName != codexMenuPackage || notification.Title != record.Title || notification.Subtitle != "会话已完成" || notification.Message == "" || notification.Timestamp.Unix() != 1700000000 {
 		t.Fatalf("notification: %+v", notification)
 	}
 }

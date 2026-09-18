@@ -763,13 +763,11 @@ func composeProjectRows(sessions []agentSession) ([]string, []string) {
 		}
 	}
 	for project, index := range positions {
+		suffix := "  ▶"
 		if active[project] {
-			prefix := "▶ " + truncateUnits(project, lensUnits-textUnits("▶   ●"))
-			gap := max(2, (lensUnits-textUnits(prefix)-textUnits("●"))/characterUnits(' '))
-			rows[index] = prefix + strings.Repeat(" ", gap) + "●"
-		} else {
-			rows[index] = row("", "▶ "+project)
+			suffix += "  ●"
 		}
+		rows[index] = row("", truncateUnits(project, lensUnits-textUnits(suffix))+suffix)
 	}
 	if len(rows) == 0 {
 		return []string{"暂无项目 · 双击退出"}, []string{""}

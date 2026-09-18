@@ -612,34 +612,17 @@ func (s *EvenService) pushSessionCompletionNotification(notification g2.PhoneNot
 }
 
 func sessionCompletionNotification(source statusSource, record agentStateRecord) g2.PhoneNotification {
-	title := strings.Join(strings.Fields(record.Title), " ")
+	title := strings.TrimSpace(record.Title)
 	if title == "" {
-		title = strings.Join(strings.Fields(record.ThreadName), " ")
+		title = record.ThreadName
 	}
 	if title == "" {
 		title = record.SessionID
 	}
-	project := strings.TrimSpace(record.Project)
-	if project == "" {
-		project = source.Label
-	}
-	finishedAt := time.Now()
-	if record.Timestamp > 0 {
-		finishedAt = time.Unix(0, int64(record.Timestamp*float64(time.Second)))
-	}
-	elapsed := strings.TrimPrefix(elapsedRow(record, finishedAt), "时间  ")
-	summary := "用时 " + elapsed
-	if record.StepCount > 0 {
-		summary += fmt.Sprintf(" · %d 步", record.StepCount)
-	}
-	message := []string{summary}
-	if record.FileCount > 0 {
-		message = append(message, fmt.Sprintf("%d 个文件 · +%d / -%d", record.FileCount, record.Additions, record.Deletions))
-	}
 	return g2.PhoneNotification{
 		ID: source.Agent + ":" + record.SessionID, PackageName: codexMenuPackage,
-		Title: title, Subtitle: project + " · 已完成", DisplayName: "Codex",
-		Message:   strings.Join(message, "\n"),
+		Title: title, Subtitle: "会话已完成", DisplayName: "Codex",
+		Message:   strings.Join(composeCompletionRows(source, record, time.Now()), "\n"),
 		Timestamp: time.Unix(0, int64(record.Timestamp*float64(time.Second))),
 	}
 }
