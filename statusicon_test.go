@@ -296,12 +296,13 @@ func TestCompletionIconIsInsideCardAndVerticallyCentered(t *testing.T) {
 func TestCompletionIconIsAPlainCheckmark(t *testing.T) {
 	icon := statusIcon("done", 0)
 	stride := ((icon.Width+1)/2 + 3) &^ 3
-	for _, point := range [][2]int{{9, 25}, {18, 34}, {39, 12}} {
+	scale := func(value int) int { return value * completionIconSize / 48 }
+	for _, point := range [][2]int{{scale(9), scale(25)}, {scale(18), scale(34)}, {scale(39), scale(12)}} {
 		if pixel := bmpValueSized(icon.BMP, point[0], point[1], icon.Height, stride); pixel == 0 {
 			t.Fatalf("completion icon pixel (%d,%d) is off", point[0], point[1])
 		}
 	}
-	for _, point := range [][2]int{{4, 8}, {42, 8}, {4, 39}, {42, 39}} {
+	for _, point := range [][2]int{{scale(4), scale(8)}, {scale(42), scale(8)}, {scale(4), scale(39)}, {scale(42), scale(39)}} {
 		if pixel := bmpValueSized(icon.BMP, point[0], point[1], icon.Height, stride); pixel != 0 {
 			t.Fatalf("completion icon retained a frame pixel at (%d,%d)", point[0], point[1])
 		}

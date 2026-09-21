@@ -597,7 +597,7 @@ func TestFileChangeBadgeUsesSupportedCircle(t *testing.T) {
 
 func TestComposeAgentRowsMakesCompletionProminent(t *testing.T) {
 	record := agentStateRecord{
-		State: "done", Project: "even-app", StepCount: 4, FileCount: 2,
+		State: "done", Title: "完善完成提示", Project: "even-app", StepCount: 4, FileCount: 2,
 		Additions: 28, Deletions: 6, StartedAt: float64(viewNow.Add(-3 * time.Minute).Unix()), Timestamp: float64(viewNow.Unix()),
 	}
 	steps := []agentStreamStep{
@@ -609,16 +609,16 @@ func TestComposeAgentRowsMakesCompletionProminent(t *testing.T) {
 	if len(rows) > maxRows {
 		t.Fatalf("completion rows = %d, want at most %d: %v", len(rows), maxRows, rows)
 	}
-	if strings.TrimSpace(rows[0]) != "任务已完成" {
+	if strings.TrimSpace(rows[0]) != "完成" {
 		t.Fatalf("completion title = %q", rows[0])
 	}
-	if rows[1] != "" {
-		t.Fatalf("completion spacing = %q", rows[1])
+	if strings.TrimSpace(rows[1]) != "完善完成提示" {
+		t.Fatalf("completion task title = %q", rows[1])
 	}
 	if strings.TrimSpace(rows[2]) != "WorkBuddy · even-app" {
 		t.Fatalf("completion identity = %q", rows[2])
 	}
-	if strings.TrimSpace(rows[3]) != "用时 3:00" || strings.TrimSpace(rows[4]) != "2 个文件 · +28 / -6" {
+	if strings.TrimSpace(rows[3]) != "3:00 · 2 文件 · +28 / -6" {
 		t.Fatalf("completion summary = %q", rows[3])
 	}
 	if strings.Contains(strings.Join(rows, "\n"), "任务结束") {
@@ -627,12 +627,12 @@ func TestComposeAgentRowsMakesCompletionProminent(t *testing.T) {
 }
 
 func TestCompletionRowsAreCenteredInTextColumn(t *testing.T) {
-	for _, text := range []string{"任务已完成", "WorkBuddy · even-app", "2 个文件 · +28 / -6"} {
+	for _, text := range []string{"完成", "完善完成提示", "WorkBuddy · even-app", "3:00 · 2 文件 · +28 / -6"} {
 		got := completionRow(text)
 		content := strings.TrimLeft(got, " ")
 		left := textUnits(got) - textUnits(content) - textUnits(completionIndent)
 		right := completionUnits - textUnits(content) - left
-		if difference := left - right; difference < -characterUnits(' ') || difference > characterUnits(' ') {
+		if difference := left - right; difference < -asciiUnits || difference > asciiUnits {
 			t.Fatalf("completionRow(%q) is not centered: left=%d right=%d row=%q", text, left, right, got)
 		}
 	}

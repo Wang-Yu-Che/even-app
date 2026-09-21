@@ -13,10 +13,18 @@ import (
 )
 
 func TestCompletionNotificationIncludesSession(t *testing.T) {
-	record := agentStateRecord{SessionID: "session-1", State: "done", Title: "修复菜单", Project: "even-app", Timestamp: 1700000000}
+	finished := time.Unix(1700000000, 0)
+	record := agentStateRecord{
+		SessionID: "session-1", State: "done", Title: "修复菜单", Project: "even-app",
+		StartedAt: float64(finished.Add(-3 * time.Minute).Unix()), Timestamp: float64(finished.Unix()),
+		FileCount: 2, Additions: 28, Deletions: 6,
+	}
 	notification := sessionCompletionNotification(statusSource{Agent: "codex", Label: "Codex"}, record)
-	if notification.ID != "codex:session-1" || notification.PackageName != codexMenuPackage || notification.Title != record.Title || notification.Subtitle != "会话已完成" || notification.Message == "" || notification.Timestamp.Unix() != 1700000000 {
+	if notification.ID != "codex:session-1" || notification.PackageName != codexMenuPackage || notification.Title != record.Title || notification.Subtitle != "Codex · even-app" || notification.Message != "已完成 · 3:00 · 2 文件 · +28 / -6" || notification.Timestamp.Unix() != finished.Unix() {
 		t.Fatalf("notification: %+v", notification)
+	}
+	if strings.Contains(notification.Message, "\n") || strings.HasPrefix(notification.Message, " ") {
+		t.Fatalf("notification message contains page-layout whitespace: %q", notification.Message)
 	}
 }
 
@@ -257,7 +265,7 @@ func TestListInfoContentPlacesRandomFaceBelowBuddy(t *testing.T) {
 
 func TestCompletionLayoutKeepsOuterFrame(t *testing.T) {
 	style := agentPageStyle("done")
-	if style.BorderWidth != 2 || style.BorderColor != 15 || style.BorderRadius != 10 || style.PaddingLength != 16 {
+	if style.BorderWidth != 1 || style.BorderColor != 8 || style.BorderRadius != 8 || style.PaddingLength != 12 {
 		t.Fatalf("completion frame style = %+v", style)
 	}
 }

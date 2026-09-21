@@ -579,10 +579,14 @@ func sessionCompletionNotification(source statusSource, record agentStateRecord)
 	if title == "" {
 		title = record.SessionID
 	}
+	subtitle := source.Label
+	if record.Project != "" {
+		subtitle += " · " + record.Project
+	}
 	return g2.PhoneNotification{
 		ID: source.Agent + ":" + record.SessionID, PackageName: codexMenuPackage,
-		Title: title, Subtitle: "会话已完成", DisplayName: "Codex",
-		Message:   strings.Join(composeCompletionRows(source, record, time.Now()), "\n"),
+		Title: title, Subtitle: subtitle, DisplayName: "Codex",
+		Message:   "已完成 · " + completionSummary(record, time.Now()),
 		Timestamp: time.Unix(0, int64(record.Timestamp*float64(time.Second))),
 	}
 }
@@ -1114,7 +1118,7 @@ func agentPageStyle(state string) g2.TextStyle {
 	if state == "done" {
 		return g2.TextStyle{
 			X: completionCardX, Y: completionCardY, Width: completionCardWidth, Height: completionCardHeight,
-			BorderWidth: 2, BorderColor: 15, BorderRadius: 10, PaddingLength: 16,
+			BorderWidth: 1, BorderColor: 8, BorderRadius: 8, PaddingLength: 12,
 		}
 	}
 	if isAgentList(state) {

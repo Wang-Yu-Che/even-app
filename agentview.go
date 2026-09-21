@@ -18,8 +18,8 @@ const (
 	maxRows            = 8
 	nativeListPageSize = 6
 	streamReadLimit    = 12
-	completionUnits    = 290
-	completionIndent   = "                      "
+	completionUnits    = 360
+	completionIndent   = "              "
 )
 
 // lensStyle is the entire glyph vocabulary of the display. Nothing else in the
@@ -85,32 +85,44 @@ func composeAgentRows(source statusSource, record agentStateRecord, steps []agen
 }
 
 func composeCompletionRows(source statusSource, record agentStateRecord, now time.Time) []string {
-	name := record.Project
-	if name == "" {
-		name = record.ThreadName
+	title := record.Title
+	if title == "" {
+		title = record.ThreadName
 	}
-	if name == "" {
-		name = source.Label
+	if title == "" {
+		title = record.Project
 	}
-	elapsed := strings.TrimPrefix(elapsedRow(record, now), "时间  ")
+	if title == "" {
+		title = source.Label
+	}
+	context := source.Label
+	if record.Project != "" && record.Project != title {
+		context += " · " + record.Project
+	}
 	rows := []string{
-		completionRow("任务已完成"),
-		"",
-		completionRow(source.Label + " · " + name),
-		completionRow("用时 " + elapsed),
-	}
-	if record.FileCount > 0 {
-		rows = append(rows, completionRow(fmt.Sprintf("%d 个文件 · +%d / -%d", record.FileCount, record.Additions, record.Deletions)))
-	} else if record.StepCount > 0 {
-		rows = append(rows, completionRow(fmt.Sprintf("完成 %d 步", record.StepCount)))
+		completionRow("完成"),
+		completionRow(title),
+		completionRow(context),
+		completionRow(completionSummary(record, now)),
 	}
 	return rows
+}
+
+func completionSummary(record agentStateRecord, now time.Time) string {
+	summary := strings.TrimPrefix(elapsedRow(record, now), "时间  ")
+	if record.FileCount > 0 {
+		return summary + fmt.Sprintf(" · %d 文件 · +%d / -%d", record.FileCount, record.Additions, record.Deletions)
+	}
+	if record.StepCount > 0 {
+		return summary + fmt.Sprintf(" · %d 步", record.StepCount)
+	}
+	return summary
 }
 
 func completionRow(text string) string {
 	text = truncateUnits(text, completionUnits)
 	leftPadding := (completionUnits - textUnits(text)) / 2
-	return completionIndent + strings.Repeat(" ", leftPadding/characterUnits(' ')) + text
+	return completionIndent + strings.Repeat(" ", leftPadding/textUnits(" ")) + text
 }
 
 // headerRow is the always-present session identity.

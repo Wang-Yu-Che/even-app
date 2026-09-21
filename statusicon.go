@@ -19,12 +19,12 @@ const (
 	statusIconX = 520
 	statusIconY = 34
 
-	completionCardX      = 80
-	completionCardY      = 52
-	completionCardWidth  = 440
-	completionCardHeight = 184
-	completionIconSize   = 48
-	completionIconX      = completionCardX + 72
+	completionCardX      = 48
+	completionCardY      = 66
+	completionCardWidth  = 480
+	completionCardHeight = 156
+	completionIconSize   = 40
+	completionIconX      = completionCardX + 28
 	completionIconY      = completionCardY + (completionCardHeight-completionIconSize)/2
 )
 
