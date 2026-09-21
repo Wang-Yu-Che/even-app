@@ -59,3 +59,21 @@ func TestSimulatorNativeList(t *testing.T) {
 		t.Fatal("detail retained list")
 	}
 }
+
+func TestSimulatorListPreservesInfoPanel(t *testing.T) {
+	service := &EvenService{}
+	style := agentPageStyle("sessions")
+	infoStyle := listInfoStyle()
+	service.simulator.setListWithInfoAndIcon([]string{"one"}, style, "18:42\n电量 85%", infoStyle, nil)
+	encoded, err := service.PreviewPage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var page simulatorPage
+	if err := json.Unmarshal([]byte(encoded), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Info == nil || page.Info.Text != "18:42\n电量 85%" || page.Info.Style != infoStyle {
+		t.Fatalf("info panel changed in transport: %+v", page.Info)
+	}
+}

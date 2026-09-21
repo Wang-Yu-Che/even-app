@@ -21,10 +21,12 @@ import (
 // embedded preview. It contains the exact text, geometry and BMP bytes sent to
 // G2, so the desktop does not need a second native simulator process.
 type simulatorPage struct {
-	List  *simulatorList `json:"list,omitempty"`
-	Text  string         `json:"text"`
-	Style g2.TextStyle   `json:"style"`
-	Icon  *g2.StatusIcon `json:"icon"`
+	List    *simulatorList `json:"list,omitempty"`
+	Info    *simulatorText `json:"info,omitempty"`
+	Text    string         `json:"text"`
+	Style   g2.TextStyle   `json:"style"`
+	Icon    *g2.StatusIcon `json:"icon"`
+	Divider *g2.StatusIcon `json:"divider,omitempty"`
 }
 
 type officialSimulator struct {
@@ -153,7 +155,24 @@ type simulatorList struct {
 	SelectBorder bool     `json:"selectBorder"`
 }
 
+type simulatorText struct {
+	Text  string       `json:"text"`
+	Style g2.TextStyle `json:"style"`
+}
+
 func (s *officialSimulator) setList(rows []string, style g2.TextStyle) {
+	s.setListWithInfoAndIcon(rows, style, "", g2.TextStyle{}, nil)
+}
+
+func (s *officialSimulator) setListWithIcon(rows []string, style g2.TextStyle, icon *g2.StatusIcon) {
+	s.setListWithInfoAndIcon(rows, style, "", g2.TextStyle{}, icon)
+}
+
+func (s *officialSimulator) setListWithInfoAndIcon(rows []string, style g2.TextStyle, info string, infoStyle g2.TextStyle, icon *g2.StatusIcon) {
+	s.setListWithInfoIconAndDivider(rows, style, info, infoStyle, icon, nil)
+}
+
+func (s *officialSimulator) setListWithInfoIconAndDivider(rows []string, style g2.TextStyle, info string, infoStyle g2.TextStyle, icon, divider *g2.StatusIcon) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	itemWidth := style.Width - 2*(style.BorderWidth+style.PaddingLength)
@@ -161,7 +180,12 @@ func (s *officialSimulator) setList(rows []string, style g2.TextStyle) {
 		itemWidth = style.ListItemWidth
 	}
 	s.page = simulatorPage{
-		Style: style,
-		List:  &simulatorList{Items: append([]string(nil), rows...), ItemWidth: itemWidth, SelectBorder: true},
+		Style:   style,
+		List:    &simulatorList{Items: append([]string(nil), rows...), ItemWidth: itemWidth, SelectBorder: true},
+		Icon:    icon,
+		Divider: divider,
+	}
+	if info != "" {
+		s.page.Info = &simulatorText{Text: info, Style: infoStyle}
 	}
 }

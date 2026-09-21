@@ -10,6 +10,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"log"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,6 +129,8 @@ type EvenService struct {
 	agentPageActive    bool
 	displayedListKeys  []string
 	agentIconState     string
+	listBuddyMode      string
+	listBuddyToken     atomic.Uint64
 	// iconMu serialises icon writes between the loading sweep and a status
 	// push, so a sweep that has already been superseded cannot land a frame on
 	// top of the icon pushed after it.
@@ -172,6 +175,7 @@ func NewEvenService() *EvenService {
 	serviceContext, serviceCancel := context.WithCancel(context.Background())
 	service := &EvenService{
 		displayDuration:  5 * time.Second,
+		listBuddyMode:    listBuddyQingzhu,
 		agentDisplayWake: make(chan struct{}, 1),
 		serviceContext:   serviceContext,
 		serviceCancel:    serviceCancel,
@@ -818,6 +822,25 @@ func (s *EvenService) SetDisplayDuration(seconds int) error {
 	return nil
 }
 
+// SetListBuddyMode selects the decoration shown in the narrow rail beside the
+// project and session lists. A visible list is rebuilt immediately.
+func (s *EvenService) SetListBuddyMode(mode string) error {
+	if !validListBuddyMode(mode) {
+		return errors.New("列表伙伴必须是 qingzhu 或 xiaojiaqi")
+	}
+	s.mu.Lock()
+	changed := s.listBuddyMode != mode
+	s.listBuddyMode = mode
+	active := changed && isAgentList(s.agentIconState) && s.agentPageActive
+	keys := append([]string(nil), s.displayedListKeys...)
+	s.mu.Unlock()
+	if active && s.monitor != nil {
+		status := s.monitor.Status()
+		s.pushAgentView(status.Rows, true, status.State, "", keys)
+	}
+	return nil
+}
+
 func (s *EvenService) ShowTeleprompter(text string) error {
 	return s.withDisplayClient(func(client *g2.Client) error {
 		return client.DisplayText(context.Background(), strings.TrimSpace(text))
@@ -1104,6 +1127,46 @@ func agentPageStyle(state string) g2.TextStyle {
 	}
 }
 
+const listInfoName = "list-info"
+const listInfoWidth = 100
+const listInfoInnerWidth = 96
+
+var listBuddyFaces = []string{"(^_^)", "(>_<)", "(-_-)", "(o_o)", "(^o^)"}
+
+func listInfoStyle() g2.TextStyle {
+	return g2.TextStyle{
+		X: 437, Y: 32, Width: 106, Height: 229,
+		BorderWidth: 1, BorderColor: 5, BorderRadius: 6, PaddingLength: 4,
+	}
+}
+
+func listInfoText(now time.Time, status g2.Status) string {
+	battery := "[     ]:"
+	if status.SettingsKnown {
+		percent := max(0, min(100, status.Settings.BatteryPercent))
+		bars := (percent + 19) / 20
+		battery = fmt.Sprintf("[%s%s]:", strings.Repeat("|", bars), strings.Repeat(" ", 5-bars))
+		if status.Settings.Charging {
+			battery = "+" + battery
+		}
+	}
+	timeText := now.Format("15:04")
+	spaceWidth := textUnits(" ")
+	minimumSpaces := 2
+	if status.SettingsKnown && status.Settings.Charging {
+		minimumSpaces = 1
+	}
+	spaces := max(minimumSpaces, (listInfoWidth-textUnits(timeText)-textUnits(battery))/spaceWidth)
+	return timeText + strings.Repeat(" ", spaces) + battery
+}
+
+func listInfoContent(now time.Time, status g2.Status) string {
+	face := listBuddyFaces[rand.IntN(len(listBuddyFaces))]
+	spaceWidth := textUnits(" ")
+	leadingSpaces := max(0, (listInfoInnerWidth-textUnits(face))/(2*spaceWidth))
+	return listInfoText(now, status) + strings.Repeat("\n", 7) + strings.Repeat(" ", leadingSpaces) + face
+}
+
 func (s *EvenService) showQueuedAgentUpdate(update agentDisplayUpdate) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1114,6 +1177,7 @@ func (s *EvenService) showQueuedAgentUpdate(update agentDisplayUpdate) bool {
 		return false
 	}
 	client := s.client
+	buddyToken := s.listBuddyToken.Add(1)
 	previousState := s.agentIconState
 	style := agentPageStyle(update.state)
 
@@ -1131,7 +1195,12 @@ func (s *EvenService) showQueuedAgentUpdate(update agentDisplayUpdate) bool {
 
 	if isAgentList(update.state) {
 		log.Printf("[codex-list] sending state=%s rows=%d", update.state, len(update.rows))
-		if err := client.DisplayListWithStyle(context.Background(), streamContainerName, update.rows, style); err != nil {
+		rows := update.rows
+		buddyFrames := listBuddyAnimation(s.listBuddyMode, update.state)
+		buddy := buddyFrames[0]
+		infoStyle := listInfoStyle()
+		info := listInfoContent(time.Now(), s.clientStatus)
+		if err := client.DisplayListWithInfoAndIcon(context.Background(), streamContainerName, rows, style, listInfoName, info, infoStyle, buddy); err != nil {
 			log.Printf("[codex-list] failed: %v", err)
 			s.recordConnectionErrorLocked(fmt.Errorf("发送会话列表失败: %w", err))
 			s.failAgentPageLocked()
@@ -1139,10 +1208,13 @@ func (s *EvenService) showQueuedAgentUpdate(update agentDisplayUpdate) bool {
 		}
 		log.Printf("[codex-list] SDK confirmed successful acknowledgement")
 		s.displayedListKeys = append([]string(nil), update.listKeys...)
-		s.simulator.setList(update.rows, style)
+		s.simulator.setListWithInfoAndIcon(rows, style, info, infoStyle, &buddy)
 		s.agentPageActive = true
 		s.agentIconState = update.state
 		s.cancelDisplayTimerLocked()
+		if len(buddyFrames) > 1 {
+			go s.playListBuddyAnimation(buddyToken, client, buddyFrames[1:])
+		}
 		return true
 	}
 	if s.agentPageActive {
@@ -1180,6 +1252,37 @@ func (s *EvenService) showQueuedAgentUpdate(update agentDisplayUpdate) bool {
 	s.agentIconState = update.state
 	s.scheduleClearLocked(client, update.state)
 	return true
+}
+
+func (s *EvenService) playListBuddyAnimation(token uint64, client *g2.Client, frames []g2.StatusIcon) {
+	for _, frame := range frames {
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-s.serviceContext.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		s.iconMu.Lock()
+		if s.listBuddyToken.Load() != token {
+			s.iconMu.Unlock()
+			return
+		}
+		err := client.UpdateStatusIcon(context.Background(), frame)
+		if err == nil {
+			s.simulator.setIcon(frame)
+		}
+		s.iconMu.Unlock()
+		if err != nil {
+			log.Printf("[codex-list] buddy animation stopped: %v", err)
+			s.mu.Lock()
+			if s.listBuddyToken.Load() == token {
+				s.agentPageActive = false
+			}
+			s.mu.Unlock()
+			return
+		}
+	}
 }
 
 // createAgentPage builds the text and icon page. The bitmap rides along with

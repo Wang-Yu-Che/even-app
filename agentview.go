@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 )
@@ -59,10 +60,7 @@ var lens = lensStyle{
 // dividerRow is the rule between the session head and the file/step list.
 //
 // It carries one more half-width space than a marker row, so the rule hangs off
-// the session identity instead of starting on the marker column: G2 draws 【
-// with a left side bearing wide enough that the header's ink lands about a cell
-// right of every other row's box, and a rule on the marker column reads as
-// poking out past the heading it belongs to.
+// the session identity instead of starting on the marker column.
 var dividerRow = lens.Header + " " + strings.Repeat("─", 22)
 
 // composeAgentRows renders one compact terminal transcript for a session.
@@ -623,7 +621,18 @@ func liveToolAction(tool, target string) string {
 
 const commandPrompt = " >_  "
 
-const sessionPrompt = "【>_ 】 "
+var sessionFaces = [...]string{
+	"（＞﹏＜）",
+	"（≧▽≦）",
+	"（＾▽＾）",
+	"（￣▽￣）",
+	"（⊙▽⊙）",
+	"（；▽；）",
+}
+
+// Pick once at startup so the face varies between runs without flickering on
+// every status refresh. Every candidate occupies the same five CJK-width cells.
+var sessionPrompt = sessionFaces[rand.IntN(len(sessionFaces))] + " "
 
 func isBashTool(tool string) bool {
 	switch tool {

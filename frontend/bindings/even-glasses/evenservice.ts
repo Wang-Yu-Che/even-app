@@ -98,6 +98,14 @@ export function SetHeadUp(enabled: boolean, angle: number): $CancellablePromise<
     return $Call.ByID(1617599880, enabled, angle);
 }
 
+/**
+ * SetListBuddyMode selects the decoration shown in the narrow rail beside the
+ * project and session lists. A visible list is rebuilt immediately.
+ */
+export function SetListBuddyMode(mode: string): $CancellablePromise<void> {
+    return $Call.ByID(749567274, mode);
+}
+
 export function SetScreenPosition(height: number, depth: number): $CancellablePromise<void> {
     return $Call.ByID(1079501688, height, depth);
 }

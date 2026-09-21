@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Wang-Yu-Che/even-g2-go/g2"
 )
 
 func TestCompletionNotificationIncludesSession(t *testing.T) {
@@ -61,6 +63,21 @@ func TestSetDisplayDurationRejectsOutOfRangeValues(t *testing.T) {
 		if err := service.SetDisplayDuration(seconds); err == nil {
 			t.Errorf("SetDisplayDuration(%d) returned nil error", seconds)
 		}
+	}
+}
+
+func TestSetListBuddyModeValidatesChoice(t *testing.T) {
+	service := &EvenService{listBuddyMode: listBuddyQingzhu}
+	for _, mode := range []string{listBuddyQingzhu, listBuddyXiaojiaqi} {
+		if err := service.SetListBuddyMode(mode); err != nil {
+			t.Fatalf("SetListBuddyMode(%q) error = %v", mode, err)
+		}
+		if service.listBuddyMode != mode {
+			t.Fatalf("list buddy mode = %q, want %q", service.listBuddyMode, mode)
+		}
+	}
+	if err := service.SetListBuddyMode("unknown"); err == nil {
+		t.Fatal("SetListBuddyMode accepted an unknown mode")
 	}
 }
 
@@ -203,6 +220,38 @@ func TestListFrameFitsRowBudget(t *testing.T) {
 	terminal := agentPageStyle("tool")
 	if list.X != terminal.X || list.Width != terminal.Width || list.ListItemWidth != listItemWidth {
 		t.Fatalf("list style = %+v, terminal style = %+v", list, terminal)
+	}
+}
+
+func TestListInfoUsesBatteryBars(t *testing.T) {
+	now := time.Date(2026, 9, 21, 8, 5, 0, 0, time.Local)
+	status := g2.Status{SettingsKnown: true, Settings: g2.DeviceSettings{BatteryPercent: 61}}
+	if got := strings.TrimSpace(listInfoText(now, status)); !strings.HasPrefix(got, "08:05  ") || !strings.HasSuffix(got, "[|||| ]:") {
+		t.Fatalf("listInfoText() = %q", got)
+	}
+	status.Settings.Charging = true
+	if got := strings.TrimSpace(listInfoText(now, status)); !strings.HasPrefix(got, "08:05 ") || !strings.HasSuffix(got, "+[|||| ]:") {
+		t.Fatalf("charging listInfoText() = %q", got)
+	}
+}
+
+func TestListInfoContentPlacesRandomFaceBelowBuddy(t *testing.T) {
+	now := time.Date(2026, 9, 21, 8, 5, 0, 0, time.Local)
+	content := listInfoContent(now, g2.Status{})
+	lines := strings.Split(content, "\n")
+	if len(lines) != 8 || !strings.HasPrefix(lines[0], "08:05  ") || !strings.HasSuffix(lines[0], "[     ]:") {
+		t.Fatalf("listInfoContent() = %q", content)
+	}
+	face := strings.TrimSpace(lines[7])
+	found := false
+	for _, candidate := range listBuddyFaces {
+		if face == candidate {
+			found = true
+			break
+		}
+	}
+	if !found || !strings.HasPrefix(lines[7], " ") || textUnits(lines[7]) > listInfoInnerWidth {
+		t.Fatalf("face line = %q", lines[7])
 	}
 }
 

@@ -24,7 +24,7 @@ const (
 	completionCardWidth  = 440
 	completionCardHeight = 184
 	completionIconSize   = 48
-	completionIconX      = completionCardX + 24
+	completionIconX      = completionCardX + 72
 	completionIconY      = completionCardY + (completionCardHeight-completionIconSize)/2
 )
 

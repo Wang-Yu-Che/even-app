@@ -355,6 +355,15 @@ func TestTextUnitsUsesFirmwareAdvances(t *testing.T) {
 	}
 }
 
+func TestSessionFacesHaveEqualWidth(t *testing.T) {
+	want := 5 * cjkUnits
+	for _, face := range sessionFaces {
+		if got := textUnits(face); got != want {
+			t.Fatalf("session face %q = %dpx, want %dpx", face, got, want)
+		}
+	}
+}
+
 // TestTruncateUnitsStaysInsideBudget guards the row budget itself: no clipping
 // path may produce a row wider than the budget, whatever the script mix.
 func TestTruncateUnitsStaysInsideBudget(t *testing.T) {

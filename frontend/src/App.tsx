@@ -124,14 +124,18 @@ const sections: { value: SectionKey; label: string; hint: string }[] = [
   { value: 'labs', label: '实验与诊断', hint: 'Dashboard 与连接排查' },
 ]
 
+type PreviewStyle = {
+  X: number; Y: number; Width: number; Height: number
+  BorderWidth: number; BorderColor: number; BorderRadius: number; PaddingLength: number
+}
+
 type PreviewPage = {
   list?: { items: string[]; itemWidth: number; selectBorder: boolean }
+  info?: { text: string; style: PreviewStyle }
   text: string
-  style: {
-    X: number; Y: number; Width: number; Height: number
-    BorderWidth: number; BorderColor: number; BorderRadius: number; PaddingLength: number
-  }
+  style: PreviewStyle
   icon: { X: number; Y: number; Width: number; Height: number; BMP: string } | null
+  divider?: { X: number; Y: number; Width: number; Height: number; BMP: string }
 }
 
 const previewColour = (level: number) => `rgba(155, 255, 159, ${Math.max(0, Math.min(15, level)) / 15})`
@@ -189,30 +193,63 @@ async function drawPreview(canvas: HTMLCanvasElement, page: PreviewPage) {
 		drawLensText(context, label, itemX + 12, y + 20)
     })
     context.restore()
-    return
+    if (page.info) {
+      const infoStyle = page.info.style
+      context.save()
+	  if (infoStyle.BorderWidth > 0) {
+		context.strokeStyle = previewColour(infoStyle.BorderColor)
+		context.lineWidth = infoStyle.BorderWidth
+		context.beginPath()
+		context.roundRect(
+		  infoStyle.X + infoStyle.BorderWidth / 2,
+		  infoStyle.Y + infoStyle.BorderWidth / 2,
+		  infoStyle.Width - infoStyle.BorderWidth,
+		  infoStyle.Height - infoStyle.BorderWidth,
+		  infoStyle.BorderRadius,
+		)
+		context.stroke()
+	  }
+	  const infoInset = infoStyle.BorderWidth + infoStyle.PaddingLength
+      context.beginPath()
+	  context.rect(infoStyle.X + infoInset, infoStyle.Y + infoInset, infoStyle.Width - infoInset * 2, infoStyle.Height - infoInset * 2)
+      context.clip()
+      context.fillStyle = previewColour(12)
+      context.font = '20px "PingFang SC", "SF Pro Text", sans-serif'
+      context.textBaseline = 'top'
+      page.info.text.split('\n').forEach((line, index) => {
+		drawLensText(context, line, infoStyle.X + infoInset, infoStyle.Y + infoInset + index * 27)
+      })
+      context.restore()
+    }
+  } else {
+    const inset = style.BorderWidth + style.PaddingLength
+    context.save()
+    context.beginPath()
+    context.rect(style.X + inset, style.Y + inset, style.Width - inset * 2, style.Height - inset * 2)
+    context.clip()
+    context.fillStyle = previewColour(15)
+    context.font = '20px "PingFang SC", "SF Pro Text", sans-serif'
+    context.textBaseline = 'top'
+    page.text.split('\n').forEach((line, index) => {
+	  drawLensText(context, line, style.X + inset, style.Y + inset + index * 27)
+    })
+    context.restore()
   }
 
-  const inset = style.BorderWidth + style.PaddingLength
-  context.save()
-  context.beginPath()
-  context.rect(style.X + inset, style.Y + inset, style.Width - inset * 2, style.Height - inset * 2)
-  context.clip()
-  context.fillStyle = previewColour(15)
-  context.font = '20px "PingFang SC", "SF Pro Text", sans-serif'
-  context.textBaseline = 'top'
-  page.text.split('\n').forEach((line, index) => {
-	drawLensText(context, line, style.X + inset, style.Y + inset + index * 27)
-  })
-  context.restore()
-
-  if (page.icon?.BMP) {
+  async function drawBMP(item: { X: number; Y: number; Width: number; Height: number; BMP: string }, label: string) {
     const image = new Image()
     await new Promise<void>((resolve, reject) => {
       image.onload = () => resolve()
-      image.onerror = () => reject(new Error('无法解码状态图标'))
-      image.src = `data:image/bmp;base64,${page.icon!.BMP}`
+      image.onerror = () => reject(new Error(`无法解码${label}`))
+      image.src = `data:image/bmp;base64,${item.BMP}`
     })
-    context.drawImage(image, page.icon.X, page.icon.Y, page.icon.Width, page.icon.Height)
+    context!.drawImage(image, item.X, item.Y, item.Width, item.Height)
+  }
+  if (page.divider?.BMP) {
+    await drawBMP(page.divider, '右侧状态栏')
+  }
+  if (page.icon?.BMP) {
+    await drawBMP(page.icon, '状态图标')
   }
 }
 
@@ -435,6 +472,10 @@ function App() {
   const [imageName, setImageName] = useState('')
   const [mode, setMode] = useState<'native' | 'teleprompter'>('native')
   const [displaySeconds, setDisplaySeconds] = useState(5)
+  const [listBuddyMode, setListBuddyMode] = useState(() => {
+    const saved = localStorage.getItem('listBuddyMode')
+    return saved === 'xiaojiaqi' ? saved : 'qingzhu'
+  })
   const [busy, setBusy] = useState(false)
   const [dark, setDark] = useState(false)
   const [notice, setNotice] = useState<Notice>({ text: '准备连接你的 Even G2', error: false })
@@ -472,6 +513,10 @@ function App() {
     void refresh()
     const timer = setInterval(() => void refresh(), 500)
     return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    void EvenService.SetListBuddyMode(listBuddyMode).catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -537,6 +582,11 @@ function App() {
   }, 'Dashboard 日程已发送')
   const clearSchedule = () => run(() => EvenService.ClearDashboardSchedule(dashboardExperimental), 'Dashboard 日程已清空')
   const saveDisplayDuration = () => run(() => EvenService.SetDisplayDuration(displaySeconds), `显示时长已设为 ${displaySeconds} 秒`)
+  const chooseListBuddy = (mode: string) => {
+    setListBuddyMode(mode)
+    localStorage.setItem('listBuddyMode', mode)
+    void run(() => EvenService.SetListBuddyMode(mode), '列表伙伴已更新')
+  }
   const sendText = () =>
     run(
       () => (mode === 'teleprompter' ? EvenService.ShowTeleprompter(text) : EvenService.ShowNativeText(text)),
@@ -858,6 +908,13 @@ function App() {
                   </div>
                 </div>
                 <Button variant="secondary" size="sm" className="mt-3 w-full" disabled={busy || headUpAngle < 0 || headUpAngle > 60} onClick={saveHeadUp}>应用抬头设置</Button>
+              </Panel>
+
+              <Panel title="列表伙伴" hint="显示在项目与会话列表右侧；宠物只播放三帧后停住">
+                <DeviceSelect label="列表伙伴" value={listBuddyMode} onChange={chooseListBuddy}>
+                  <option value="qingzhu">Qingzhu</option>
+                  <option value="xiaojiaqi">小佳琪</option>
+                </DeviceSelect>
               </Panel>
               </div>
 
