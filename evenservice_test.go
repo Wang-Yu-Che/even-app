@@ -81,12 +81,12 @@ func TestSetListBuddyModeValidatesChoice(t *testing.T) {
 	}
 }
 
-func TestCompletionDisplayStaysVisibleLongEnough(t *testing.T) {
-	if got := displayClearDelay(5*time.Second, "done"); got != completionDisplayDuration {
-		t.Fatalf("done delay = %s, want %s", got, completionDisplayDuration)
+func TestCompletionDisplayUsesIdleTimeout(t *testing.T) {
+	if got := displayClearDelay(5*time.Second, "done"); got != completionIdleTimeout {
+		t.Fatalf("done delay = %s, want %s", got, completionIdleTimeout)
 	}
-	if got := displayClearDelay(30*time.Second, "done"); got != 30*time.Second {
-		t.Fatalf("configured longer delay = %s, want 30s", got)
+	if got := displayClearDelay(30*time.Second, "done"); got != completionIdleTimeout {
+		t.Fatalf("configured longer delay changed completion timeout: got %s, want %s", got, completionIdleTimeout)
 	}
 	if got := displayClearDelay(5*time.Second, "idle"); got != 5*time.Second {
 		t.Fatalf("idle delay = %s, want 5s", got)

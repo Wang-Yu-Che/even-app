@@ -156,7 +156,7 @@ type agentDisplayUpdate struct {
 	icon    string
 }
 
-const completionDisplayDuration = 15 * time.Second
+const completionIdleTimeout = 10 * time.Second
 
 // hookSources lists every agent whose hook state directory is mirrored to the
 // glasses. Adapters live in scripts/even-<agent>-status-writer.mjs.
@@ -616,6 +616,9 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 			}
 			current := s.client == client
 			active := current && s.agentPageActive
+			if active && s.agentIconState == "done" && event.Type >= protocol.EvenHubEventClick && event.Type <= protocol.EvenHubEventDoubleClick {
+				s.scheduleClearLocked(client, "done")
+			}
 			listPage := isAgentList(s.agentIconState)
 			projectPage := s.agentIconState == "projects"
 			key := ""
@@ -982,11 +985,11 @@ func formatDiagnosticTime(value time.Time) string {
 }
 
 func displayClearDelay(configured time.Duration, state string) time.Duration {
+	if state == "done" {
+		return completionIdleTimeout
+	}
 	if configured <= 0 {
 		configured = 5 * time.Second
-	}
-	if state == "done" && configured < completionDisplayDuration {
-		return completionDisplayDuration
 	}
 	return configured
 }
