@@ -127,6 +127,12 @@ func (s *EvenService) showGameFrame(ctx context.Context, text string, initial bo
 }
 
 func (s *EvenService) showMediaPage(ctx context.Context, state mediaapp.State, message string, initial bool) error {
+	showLyrics := mediaShowsLyrics(state, message)
+	clock := mediaClock(state, message)
+	divider := mediaBlankDivider
+	if showLyrics {
+		divider = mediaPageDivider
+	}
 	rows := state.Lyrics
 	if message != "" || !state.HasMedia() {
 		rows = [3]string{}
@@ -134,7 +140,7 @@ func (s *EvenService) showMediaPage(ctx context.Context, state mediaapp.State, m
 	if bitmapLyrics {
 		state.Lyrics = [3]string{}
 	}
-	message = mediaPageText(state, message)
+	message = mediaPageText(state, message, showLyrics)
 
 	return s.withClient(func(client *g2.Client) error {
 		if err := ctx.Err(); err != nil {
@@ -155,7 +161,9 @@ func (s *EvenService) showMediaPage(ctx context.Context, state mediaapp.State, m
 				lyric.BMP = nil
 			}
 		}
-		textDeferred := !initial && lyricChanged && s.mediaText != message
+		textChanged := s.mediaText != message || s.mediaDividerVisible != showLyrics ||
+			s.mediaTimeText != [2]string{clock[0].Content, clock[1].Content}
+		textDeferred := !initial && lyricChanged && textChanged
 		// Artwork only changes with the track; decode and resend it only then.
 		cover := s.mediaCoverIcon
 		coverChanged := initial || state.ArtworkData != s.mediaCoverKey
@@ -171,7 +179,7 @@ func (s *EvenService) showMediaPage(ctx context.Context, state mediaapp.State, m
 		// page goes out each time, and title marquee plus clock ticks would
 		// otherwise fill the BLE buffer until the glasses exit the page.
 		textHeld := !initial && (coverSending || time.Now().Before(s.mediaCoverWriteAt) ||
-			(s.mediaText != message && time.Since(s.mediaTextWriteAt) < mediaTextInterval))
+			(textChanged && time.Since(s.mediaTextWriteAt) < mediaTextInterval))
 		// The SDK binds the BLE heartbeat to the write context.
 		var err error
 		if initial {
@@ -183,20 +191,38 @@ func (s *EvenService) showMediaPage(ctx context.Context, state mediaapp.State, m
 			s.stopLoadingLocked()
 			s.agentPageActive = false
 			s.agentIconState = ""
-			icons := []g2.StatusIcon{cover, mediaPageDivider}
+			icons := []g2.StatusIcon{cover, divider}
 			if bitmapLyrics {
 				icons = append(icons, lyric)
 			}
-			err = client.ShowTextWithIcons(s.serviceContext, mediaapp.ContainerName, message, mediaPageStyle, icons)
+			err = client.ShowTextWithIcons(s.serviceContext, mediaapp.ContainerName, message, mediaPageStyle, icons, clock[:]...)
 		} else {
-			if !lyricChanged && !textHeld && s.mediaText != message {
-				if err := client.UpdateText(s.serviceContext, mediaapp.ContainerName, message); err != nil {
-					return s.handleMediaWriteErrorLocked(client, fmt.Errorf("media text: %w", err))
+			if !lyricChanged && !textHeld && textChanged {
+				if s.mediaDividerVisible != showLyrics {
+					if err := client.UpdateStatusIcon(s.serviceContext, divider); err != nil {
+						return s.handleMediaWriteErrorLocked(client, fmt.Errorf("media divider: %w", err))
+					}
+				}
+				if s.mediaText != message {
+					if err := client.UpdateText(s.serviceContext, mediaapp.ContainerName, message); err != nil {
+						return s.handleMediaWriteErrorLocked(client, fmt.Errorf("media text: %w", err))
+					}
+				}
+				for index, item := range clock {
+					if s.mediaTimeText[index] != item.Content {
+						if err := client.UpdateText(s.serviceContext, item.Name, item.Content, item.ID); err != nil {
+							return s.handleMediaWriteErrorLocked(client, fmt.Errorf("media clock: %w", err))
+						}
+					}
 				}
 				s.mediaTextWriteAt = time.Now()
 			}
 			if lyricChanged || textHeld {
 				message = s.mediaText
+				showLyrics = s.mediaDividerVisible
+				for index := range clock {
+					clock[index].Content = s.mediaTimeText[index]
+				}
 			}
 		}
 		if err == nil && lyricChanged && !initial && !lyricDeferred {
@@ -226,7 +252,9 @@ func (s *EvenService) showMediaPage(ctx context.Context, state mediaapp.State, m
 				}
 			}
 			s.mediaText = message
-			s.simulator.setMediaPage(message, cover, lyric)
+			s.mediaTimeText = [2]string{clock[0].Content, clock[1].Content}
+			s.mediaDividerVisible = showLyrics
+			s.simulator.setMediaPage(message, cover, lyric, showLyrics, clock)
 		}
 		if err == nil && (lyricDeferred || textDeferred || coverDeferred || textHeld) {
 			return mediaapp.ErrDisplayDeferred

@@ -131,6 +131,11 @@ type EvenService struct {
 	miniAppOrder         []string
 	mediaApp             *mediaapp.App
 	mediaText            string
+	imuActive            bool
+	imuSamples           []IMUSample
+	imuStartedAt         time.Time
+	mediaTimeText        [2]string
+	mediaDividerVisible  bool
 	mediaLyricRows       [3]string
 	mediaLyricIcon       g2.StatusIcon
 	mediaCoverKey        string
@@ -640,6 +645,15 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 	}
 	go func() {
 		for event := range events {
+			if event.Kind == protocol.EvenHubEventSystem && event.Type == protocol.EvenHubEventIMUDataReport {
+				received := time.Now()
+				s.mu.Lock()
+				if s.client == client && s.imuActive && ctx.Err() == nil && !received.Before(s.imuStartedAt) {
+					s.recordIMUSample(event, received)
+				}
+				s.mu.Unlock()
+				continue
+			}
 			log.Printf("[glasses-event] kind=%s type=%d appID=%d package=%q container=%q", event.Kind.String(), event.Type, event.AppID, event.PackageName, event.Name)
 			if ctx.Err() != nil {
 				return
@@ -671,6 +685,9 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 					log.Printf("[glasses-status] lost readiness left=%s right=%s", status.Left, status.Right)
 				}
 				s.clientStatus = status
+				if !status.Ready {
+					s.imuActive = false
+				}
 				if !status.Ready && s.mediaApp != nil {
 					s.mediaApp.Cancel()
 				}
@@ -870,6 +887,7 @@ func (s *EvenService) ClearDashboardSchedule(experimental bool) error {
 }
 
 func (s *EvenService) stopSubscriptionsLocked() {
+	s.imuActive = false
 	if s.mediaApp != nil {
 		s.mediaApp.Cancel()
 	}

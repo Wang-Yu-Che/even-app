@@ -14,5 +14,7 @@ export type {
     DeviceEvent,
     DeviceSettings,
     DeviceStatus,
+    IMUDiagnostics,
+    IMUSample,
     MiniAppVisibility
 } from "./models.js";

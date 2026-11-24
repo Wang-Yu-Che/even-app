@@ -44,6 +44,30 @@ var mediaPageDivider = mediaBitmap(3, "media-divider", 212, mediaCoverY, 20, med
 	return 0
 })
 
+var mediaBlankDivider = mediaBitmap(3, "media-divider", 212, mediaCoverY, 20, mediaCoverSize, func(_, _ int) uint8 { return 0 })
+
+func mediaShowsLyrics(state media.State, message string) bool {
+	return message == "" && state.HasMedia() && (state.Lyrics != [3]string{} ||
+		state.LyricsStatus == "正在查找歌词…" || state.LyricsStatus == "等待播放进度")
+}
+
+func mediaClock(state media.State, message string) [2]protocol.EvenHubText {
+	times := [2]protocol.EvenHubText{
+		{ID: 5, Name: "media-elapsed", Content: " ", Geometry: protocol.EvenHubGeometry{X: 22, Y: 163, Width: 80, Height: 27}},
+		{ID: 6, Name: "media-duration", Content: " ", Geometry: protocol.EvenHubGeometry{X: 480, Y: 163, Width: 74, Height: 27}},
+	}
+	if message == "" && state.HasMedia() {
+		times[0].Content, times[1].Content = "—", "—"
+		if state.ElapsedTime >= 0 {
+			times[0].Content = mediaTime(state.ElapsedTime)
+		}
+		if state.Duration > 0 {
+			times[1].Content = mediaTime(state.Duration)
+		}
+	}
+	return times
+}
+
 func mediaBitmap(id int, name string, x, y, width, height int, pixel func(int, int) uint8) g2.StatusIcon {
 	bmp, err := protocol.EncodeBMP4(width, height, pixel)
 	if err != nil {
@@ -54,7 +78,7 @@ func mediaBitmap(id int, name string, x, y, width, height int, pixel func(int, i
 
 func absMedia(n int) int { return max(n, -n) }
 
-func mediaPageText(state media.State, message string) string {
+func mediaPageText(state media.State, message string, showLyrics bool) string {
 	if message == "" && !state.HasMedia() {
 		message = "当前没有媒体"
 	}
@@ -68,44 +92,46 @@ func mediaPageText(state media.State, message string) string {
 	}
 	metadata := strings.Trim(strings.Join([]string{state.Artist, state.Album}, " · "), " ·")
 	rows := make([]string, 6)
-	// The source app is left out for now so the cover can be larger. Title and
-	// artist sit on rows 2–3, level with the middle of the cover; only the
-	// title scrolls, the artist is clipped with an ellipsis.
 	// Playback time drives the marquee at one rune per 0.75s (three 0.25s
 	// redraw ticks, so steps stay evenly spaced); it pauses with the track.
 	step := max(0, int(state.ElapsedTime/0.75))
-	rows[2] = mediaSpacing(mediaInfoX) + marqueeUnits(title, mediaInfoUnits, step)
-	rows[3] = mediaSpacing(mediaInfoX) + truncateUnits(strings.Join(strings.Fields(metadata), " "), mediaInfoUnits)
-	for i, lyric := range mediaLyricRows(state.Lyrics, state.LyricProgress, mediaLyricFallback(state)) {
-		if lyric == "" {
-			continue
+	if showLyrics {
+		rows[2] = mediaSpacing(mediaInfoX) + marqueeUnits(title, mediaInfoUnits, step)
+		rows[3] = mediaSpacing(mediaInfoX) + truncateUnits(strings.Join(strings.Fields(metadata), " "), mediaInfoUnits)
+		for i, lyric := range mediaLyricRows(state.Lyrics, state.LyricProgress, state.LyricsStatus) {
+			if lyric == "" {
+				continue
+			}
+			row := &rows[i+1]
+			*row += mediaSpacing(mediaLyricX-textUnits(*row)+(mediaLyricUnits-textUnits(lyric))/2) + lyric
 		}
-		row := &rows[i+1]
-		*row += mediaSpacing(mediaLyricX-textUnits(*row)+(mediaLyricUnits-textUnits(lyric))/2) + lyric
+	} else {
+		const infoWidth = 420
+		titleRows := wrapUnits(title, infoWidth)
+		if len(titleRows) > 3 {
+			titleRows = []string{marqueeUnits(title, infoWidth, step)}
+		}
+		start := 2
+		if len(titleRows) > 2 {
+			start = 1
+		}
+		for index, line := range titleRows {
+			rows[start+index] = mediaSpacing(mediaInfoX) + line
+		}
+		rows[start+len(titleRows)] = mediaSpacing(mediaInfoX) + truncateUnits(mediaSource(state), infoWidth)
 	}
 
 	const width = 530
-	elapsed, duration := "—", "—"
 	filled := 0
 	const segments = 26
-	if state.ElapsedTime >= 0 {
-		elapsed = mediaTime(state.ElapsedTime)
-	}
-	if state.Duration > 0 {
-		duration = mediaTime(state.Duration)
-		if state.ElapsedTime >= 0 {
-			filled = int(min(state.ElapsedTime/state.Duration, 1) * segments)
-		}
+	if state.Duration > 0 && state.ElapsedTime >= 0 {
+		filled = int(min(state.ElapsedTime/state.Duration, 1) * segments)
 	}
 	track := strings.Repeat("─", segments)
 	if state.Duration > 0 && state.ElapsedTime >= 0 {
 		marker := min(filled, segments-1)
 		track = strings.Repeat("━", marker) + "●" + strings.Repeat("─", segments-marker-1)
 	}
-	// Times get their own row (the blank one above the bar) so the ticking
-	// elapsed time can't push the controls around: digits have different
-	// advances and spaces only come in 5-unit steps.
-	rows[5] = elapsed + mediaSpacing(width-textUnits(elapsed)-textUnits(duration)) + duration
 	rows = append(rows, track)
 
 	center := "▶"
@@ -158,12 +184,7 @@ const (
 	mediaLyricUnits = 310
 )
 
-// mediaLyricFallback is what the lyric column shows without lyrics: the
-// lookup status while searching, otherwise the source app's name.
-func mediaLyricFallback(state media.State) string {
-	if state.LyricsStatus == "正在查找歌词…" {
-		return state.LyricsStatus
-	}
+func mediaSource(state media.State) string {
 	switch state.BundleIdentifier {
 	case "com.apple.Music":
 		return "Apple Music"
@@ -172,7 +193,7 @@ func mediaLyricFallback(state media.State) string {
 	case "com.google.Chrome":
 		return "Chrome"
 	case "":
-		return state.LyricsStatus
+		return ""
 	}
 	return state.BundleIdentifier
 }

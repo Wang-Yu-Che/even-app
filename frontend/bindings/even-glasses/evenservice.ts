@@ -53,6 +53,10 @@ export function GameStart(): $CancellablePromise<void> {
     return $Call.ByID(2268908569);
 }
 
+export function GetIMUDiagnostics(): $CancellablePromise<$models.IMUDiagnostics> {
+    return $Call.ByID(200956536);
+}
+
 /**
  * streamContainerName is the native list container mirrored to the glasses.
  * Every push rebuilds the same container, so the row count can change between
@@ -115,6 +119,10 @@ export function SetDisplayDuration(seconds: number): $CancellablePromise<void> {
 
 export function SetHeadUp(enabled: boolean, angle: number): $CancellablePromise<void> {
     return $Call.ByID(1617599880, enabled, angle);
+}
+
+export function SetIMUDiagnostics(enabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(234868404, enabled);
 }
 
 /**

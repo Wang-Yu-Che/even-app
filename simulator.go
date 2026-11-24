@@ -15,19 +15,21 @@ import (
 	"time"
 
 	"github.com/Wang-Yu-Che/even-g2-go/g2"
+	"github.com/Wang-Yu-Che/even-g2-go/protocol"
 )
 
 // simulatorPage is the page model shared by the glasses writer and the
 // embedded preview. It contains the exact text, geometry and BMP bytes sent to
 // G2, so the desktop does not need a second native simulator process.
 type simulatorPage struct {
-	List     *simulatorList  `json:"list,omitempty"`
-	Info     *simulatorText  `json:"info,omitempty"`
-	Text     string          `json:"text"`
-	Style    g2.TextStyle    `json:"style"`
-	Icon     *g2.StatusIcon  `json:"icon"`
-	Divider  *g2.StatusIcon  `json:"divider,omitempty"`
-	Overlays []g2.StatusIcon `json:"overlays,omitempty"`
+	List     *simulatorList         `json:"list,omitempty"`
+	Info     *simulatorText         `json:"info,omitempty"`
+	Text     string                 `json:"text"`
+	Style    g2.TextStyle           `json:"style"`
+	Icon     *g2.StatusIcon         `json:"icon"`
+	Divider  *g2.StatusIcon         `json:"divider,omitempty"`
+	Overlays []g2.StatusIcon        `json:"overlays,omitempty"`
+	Clock    []protocol.EvenHubText `json:"clock,omitempty"`
 }
 
 type officialSimulator struct {
@@ -119,12 +121,15 @@ func (s *officialSimulator) setPage(text string, style g2.TextStyle, icon *g2.St
 	s.page = simulatorPage{Text: text, Style: style, Icon: icon}
 }
 
-func (s *officialSimulator) setMediaPage(text string, cover, lyric g2.StatusIcon) {
+func (s *officialSimulator) setMediaPage(text string, cover, lyric g2.StatusIcon, showDivider bool, clock [2]protocol.EvenHubText) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.page = simulatorPage{
 		Text: text, Style: mediaPageStyle,
-		Icon: &cover, Divider: &mediaPageDivider,
+		Icon: &cover, Clock: clock[:],
+	}
+	if showDivider {
+		s.page.Divider = &mediaPageDivider
 	}
 	if len(lyric.BMP) > 0 {
 		s.page.Overlays = append(s.page.Overlays, lyric)

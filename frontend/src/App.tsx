@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { EvenService } from "../bindings/even-glasses";
 import { GameDemo } from "./GameDemo";
+import { IMUDiagnosticsPanel } from "./IMUDiagnosticsPanel";
 import type {
   CodexStatus,
   DashboardScheduleItem,
@@ -173,6 +174,7 @@ type PreviewPage = {
   icon: PreviewBitmap | null;
   divider?: PreviewBitmap;
   overlays?: PreviewBitmap[];
+  clock?: { Content: string; Geometry: { X: number; Y: number } }[];
 };
 
 const previewColour = (level: number) =>
@@ -334,6 +336,12 @@ async function drawPreview(canvas: HTMLCanvasElement, page: PreviewPage) {
   }
   for (const overlay of page.overlays ?? []) {
     await drawBMP(overlay, "播放器图层");
+  }
+  context.fillStyle = previewColour(15);
+  context.font = '20px "PingFang SC", "SF Pro Text", sans-serif';
+  context.textBaseline = "top";
+  for (const { Content, Geometry } of page.clock ?? []) {
+    drawLensText(context, Content, Geometry.X, Geometry.Y);
   }
 }
 
@@ -1487,6 +1495,9 @@ function App() {
 
                 {section === "labs" ? (
                   <div className="grid items-start gap-4 content-grid">
+                    <Panel title="IMU 诊断" hint="查看眼镜三轴报告，不改变镜腿操作">
+                      <IMUDiagnosticsPanel connected={status.connected} />
+                    </Panel>
                     <Panel title="官方模拟器" hint="在电脑上测试眼镜画面与交互">
                       <Button
                         variant="secondary"

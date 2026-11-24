@@ -103,6 +103,18 @@ export interface DeviceStatus {
     "lastEvent": DeviceEvent;
 }
 
+export interface IMUDiagnostics {
+    "active": boolean;
+    "samples": IMUSample[] | null;
+}
+
+export interface IMUSample {
+    "millis": number;
+    "x": number;
+    "y": number;
+    "z": number;
+}
+
 export interface MiniAppVisibility {
     "id": string;
     "name": string;
