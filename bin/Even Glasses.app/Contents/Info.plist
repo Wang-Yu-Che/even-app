@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+	<dict>
+		<key>CFBundleExecutable</key>
+		<string>even-app</string>
+		<key>CFBundleGetInfoString</key>
+		<string>Even Glasses for macOS</string>
+		<key>CFBundleIconFile</key>
+		<string>icons</string>
+		<key>CFBundleIdentifier</key>
+		<string>com.wangyuche.evencontrol</string>
+		<key>CFBundleName</key>
+		<string>Even Glasses</string>
+		<key>CFBundlePackageType</key>
+		<string>APPL</string>
+		<key>CFBundleShortVersionString</key>
+		<string>0.1.0</string>
+		<key>CFBundleVersion</key>
+		<string>0.1.0</string>
+		<key>LSMinimumSystemVersion</key>
+		<string>12.0.0</string>
+		<key>NSHighResolutionCapable</key>
+		<string>true</string>
+		<key>NSBluetoothAlwaysUsageDescription</key>
+		<string>Even Glasses uses Bluetooth to connect to and communicate with your Even G2 glasses.</string>
+		<key>NSHumanReadableCopyright</key>
+		<string>© 2026 Wang Yu Che</string>
+	</dict>
+</plist>
