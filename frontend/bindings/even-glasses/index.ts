@@ -13,5 +13,6 @@ export type {
     DeviceCapabilities,
     DeviceEvent,
     DeviceSettings,
-    DeviceStatus
+    DeviceStatus,
+    MiniAppVisibility
 } from "./models.js";

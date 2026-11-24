@@ -12,10 +12,11 @@
   "dependencies": {
     "@evenrealities/even_hub_sdk": "^0.0.15",
     "@evenrealities/pretext": "^0.1.4",
+    "@radix-ui/themes": "^3.3.0",
     "@wailsio/runtime": "latest",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "even-toolkit": "^1.7.7",
+    "lucide-react": "^1.66.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "tailwind-merge": "^3.7.0"

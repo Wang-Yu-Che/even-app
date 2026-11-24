@@ -102,3 +102,9 @@ export interface DeviceStatus {
     "audioBytes": number;
     "lastEvent": DeviceEvent;
 }
+
+export interface MiniAppVisibility {
+    "id": string;
+    "name": string;
+    "visible": boolean;
+}

@@ -45,7 +45,18 @@ export function Disconnect(): $CancellablePromise<void> {
     return $Call.ByID(1239481831);
 }
 
+export function GameInput(key: string): $CancellablePromise<void> {
+    return $Call.ByID(1218326953, key);
+}
+
+export function GameStart(): $CancellablePromise<void> {
+    return $Call.ByID(2268908569);
+}
+
 /**
+ * streamContainerName is the native list container mirrored to the glasses.
+ * Every push rebuilds the same container, so the row count can change between
+ * pushes without any create/destroy churn on the device.
  * LensCalibration pushes the self-describing calibration list and returns it, so
  * the desktop can show the same rows.
  * 
@@ -56,6 +67,14 @@ export function Disconnect(): $CancellablePromise<void> {
  */
 export function LensCalibration(): $CancellablePromise<string[] | null> {
     return $Call.ByID(567394971);
+}
+
+export function MiniAppVisibility(): $CancellablePromise<$models.MiniAppVisibility[] | null> {
+    return $Call.ByID(1260759341);
+}
+
+export function MoveMiniApp(id: string, up: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3640529738, id, up);
 }
 
 /**
@@ -104,6 +123,10 @@ export function SetHeadUp(enabled: boolean, angle: number): $CancellablePromise<
  */
 export function SetListBuddyMode(mode: string): $CancellablePromise<void> {
     return $Call.ByID(749567274, mode);
+}
+
+export function SetMiniAppVisible(id: string, visible: boolean): $CancellablePromise<void> {
+    return $Call.ByID(913907047, id, visible);
 }
 
 export function SetScreenPosition(height: number, depth: number): $CancellablePromise<void> {

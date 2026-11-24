@@ -18,6 +18,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"even-glasses/miniapps"
+	gameapp "even-glasses/miniapps/game"
+	mediaapp "even-glasses/miniapps/media"
+
 	"github.com/Wang-Yu-Che/even-g2-go/ble"
 	"github.com/Wang-Yu-Che/even-g2-go/g2"
 	"github.com/Wang-Yu-Che/even-g2-go/protocol"
@@ -99,38 +103,53 @@ type DeviceStatus struct {
 
 // EvenService exposes the supported G2 operations to the Wails frontend.
 type EvenService struct {
-	mu                 sync.Mutex
-	client             *g2.Client
-	clientStatus       g2.Status
-	monitor            *statusMonitor
-	simulator          officialSimulator
-	displayGeneration  uint64
-	connectCancel      context.CancelFunc
-	connectGeneration  uint64
-	connecting         bool
-	lastConnectError   string
-	lastConnectErrorAt time.Time
-	reconnectCount     int
-	wasReconnecting    bool
-	scanCandidates     map[string]ble.ScanResult
-	deviceCachePath    string
-	cachedDevice       *g2.Device
-	subscriptionCancel context.CancelFunc
-	audioCancel        context.CancelFunc
-	audioActive        bool
-	audioFrames        atomic.Uint64
-	audioBytes         atomic.Uint64
-	lastEvent          DeviceEvent
-	displayDuration    time.Duration
-	displayTimer       *time.Timer
-	agentUpdateMu      sync.Mutex
-	pendingAgentUpdate *agentDisplayUpdate
-	agentDisplayWake   chan struct{}
-	agentPageActive    bool
-	displayedListKeys  []string
-	agentIconState     string
-	listBuddyMode      string
-	listBuddyToken     atomic.Uint64
+	mu                   sync.Mutex
+	client               *g2.Client
+	clientStatus         g2.Status
+	monitor              *statusMonitor
+	simulator            officialSimulator
+	displayGeneration    uint64
+	connectCancel        context.CancelFunc
+	connectGeneration    uint64
+	connecting           bool
+	lastConnectError     string
+	lastConnectErrorAt   time.Time
+	reconnectCount       int
+	wasReconnecting      bool
+	scanCandidates       map[string]ble.ScanResult
+	deviceCachePath      string
+	cachedDevice         *g2.Device
+	subscriptionCancel   context.CancelFunc
+	audioCancel          context.CancelFunc
+	audioActive          bool
+	audioFrames          atomic.Uint64
+	audioBytes           atomic.Uint64
+	lastEvent            atomic.Pointer[DeviceEvent]
+	miniapps             *miniapps.Registry
+	gameApp              *gameapp.App
+	hiddenMiniApps       map[string]bool
+	miniAppOrder         []string
+	mediaApp             *mediaapp.App
+	mediaText            string
+	mediaLyricRows       [3]string
+	mediaLyricIcon       g2.StatusIcon
+	mediaCoverKey        string
+	mediaCoverIcon       g2.StatusIcon
+	mediaCoverWriteAt    time.Time
+	mediaTextWriteAt     time.Time
+	mediaWriteRetryAt    time.Time
+	mediaLyricWriteAt    time.Time
+	pendingNotifications []g2.PhoneNotification
+	displayDuration      time.Duration
+	displayTimer         *time.Timer
+	agentUpdateMu        sync.Mutex
+	pendingAgentUpdate   *agentDisplayUpdate
+	agentDisplayWake     chan struct{}
+	agentPageActive      bool
+	displayedListKeys    []string
+	agentIconState       string
+	listBuddyMode        string
+	listBuddyToken       atomic.Uint64
 	// iconMu serialises icon writes between the loading sweep and a status
 	// push, so a sweep that has already been superseded cannot land a frame on
 	// top of the icon pushed after it.
@@ -179,6 +198,11 @@ func NewEvenService() *EvenService {
 		agentDisplayWake: make(chan struct{}, 1),
 		serviceContext:   serviceContext,
 		serviceCancel:    serviceCancel,
+	}
+	service.miniapps = installedMiniApps(service)
+	service.loadMiniAppVisibility()
+	if err := service.miniapps.Start(serviceContext); err != nil {
+		panic(err)
 	}
 	if path, err := deviceCachePath(); err == nil {
 		service.deviceCachePath = path
@@ -404,6 +428,7 @@ func (s *EvenService) Disconnect() error {
 	s.agentIconState = ""
 	s.stopLoadingLocked()
 	s.cancelDisplayTimerLocked()
+	s.pendingNotifications = nil
 	s.mu.Unlock()
 
 	if cancel != nil {
@@ -421,6 +446,10 @@ func (s *EvenService) Disconnect() error {
 
 func (s *EvenService) ServiceShutdown() error {
 	s.serviceCancel()
+	var miniappErr error
+	if s.miniapps != nil {
+		miniappErr = s.miniapps.Stop()
+	}
 	s.mu.Lock()
 	s.connectGeneration++
 	if s.connectCancel != nil {
@@ -433,11 +462,14 @@ func (s *EvenService) ServiceShutdown() error {
 	s.connecting = false
 	s.stopLoadingLocked()
 	s.cancelDisplayTimerLocked()
+	s.pendingNotifications = nil
 	s.mu.Unlock()
 	if client != nil {
-		return client.Close()
+		if err := client.Close(); err != nil {
+			return err
+		}
 	}
-	return nil
+	return miniappErr
 }
 
 func (s *EvenService) Status() DeviceStatus {
@@ -535,40 +567,38 @@ func (s *EvenService) SetScreenPosition(height, depth int) error {
 	})
 }
 
-const codexMenuPackage = "com.wangyuche.evenapp.codex"
-
 func (s *EvenService) notifySessionCompleted(source statusSource, record agentStateRecord) {
 	if source.Agent != "codex" || record.State != "done" {
 		return
 	}
 	notification := sessionCompletionNotification(source, record)
-	delay := time.Duration(0)
-	if s.monitor.displayingSession(source, record) {
-		s.mu.Lock()
-		delay = displayClearDelay(s.displayDuration, record.State)
-		s.mu.Unlock()
-	}
-	if delay > 0 {
-		time.AfterFunc(delay, func() {
-			s.pushSessionCompletionNotification(notification, true)
-		})
-		return
-	}
-	s.pushSessionCompletionNotification(notification, false)
-}
-
-func (s *EvenService) pushSessionCompletionNotification(notification g2.PhoneNotification, replaceDisplay bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.client == nil || !s.client.Status().Ready {
+	if s.agentPageActive || (s.monitor != nil && !s.monitor.displayDismissed()) {
+		s.pendingNotifications = append(s.pendingNotifications, notification)
+		log.Printf("[codex-notification] deferred until miniapp exits id=%q", notification.ID)
 		return
 	}
-	if replaceDisplay {
-		s.cancelDisplayTimerLocked()
+	s.pushSessionCompletionNotificationLocked(notification)
+}
+
+func (s *EvenService) pushSessionCompletionNotificationLocked(notification g2.PhoneNotification) {
+	if s.client == nil || !s.client.Status().Ready {
+		return
 	}
 	if err := s.client.PushNotification(s.serviceContext, notification); err != nil {
 		s.recordConnectionErrorLocked(fmt.Errorf("发送会话完成通知失败: %w", err))
 	}
+}
+
+func (s *EvenService) flushPendingNotificationsLocked() {
+	if len(s.pendingNotifications) > 0 {
+		log.Printf("[codex-notification] sending %d deferred notification(s) after miniapp exit", len(s.pendingNotifications))
+	}
+	for _, notification := range s.pendingNotifications {
+		s.pushSessionCompletionNotificationLocked(notification)
+	}
+	s.pendingNotifications = nil
 }
 
 func sessionCompletionNotification(source statusSource, record agentStateRecord) g2.PhoneNotification {
@@ -602,8 +632,8 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 	events := client.SubscribeEvents(ctx)
 	statuses := client.SubscribeStatus(ctx)
 	errors := client.Errors()
-	if err := client.SetMenu(ctx, []g2.MenuItem{{PackageName: codexMenuPackage, Name: "Codex 会话"}}); err != nil {
-		s.recordConnectionErrorLocked(fmt.Errorf("注册 Codex 菜单失败: %w", err))
+	if err := client.SetMenu(ctx, s.visibleMiniAppMenuLocked()); err != nil {
+		s.recordConnectionErrorLocked(fmt.Errorf("注册 miniapp 菜单失败: %w", err))
 	}
 	if err := client.ConfigureNotifications(ctx, g2.NotificationConfig{Enabled: true, AutoDisplay: true, DurationSeconds: 5}); err != nil {
 		s.recordConnectionErrorLocked(fmt.Errorf("配置会话完成通知失败: %w", err))
@@ -611,59 +641,24 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 	go func() {
 		for event := range events {
 			log.Printf("[glasses-event] kind=%s type=%d appID=%d package=%q container=%q", event.Kind.String(), event.Type, event.AppID, event.PackageName, event.Name)
+			if ctx.Err() != nil {
+				return
+			}
+			s.lastEvent.Store(&DeviceEvent{
+				Kind: event.Kind.String(), Name: event.Name, ItemName: event.ItemName,
+				ItemIndex: event.ItemIndex, Type: protocol.EvenHubEventTypeName(event.Type),
+			})
+			if s.mediaApp != nil && s.mediaApp.HandleControlEvent(event) {
+				continue
+			}
 			s.mu.Lock()
-			if s.client == client {
-				s.lastEvent = DeviceEvent{
-					Kind: event.Kind.String(), Name: event.Name, ItemName: event.ItemName,
-					ItemIndex: event.ItemIndex, Type: protocol.EvenHubEventTypeName(event.Type),
-				}
-			}
 			current := s.client == client
-			active := current && s.agentPageActive
-			if active && s.agentIconState == "done" && event.Type >= protocol.EvenHubEventClick && event.Type <= protocol.EvenHubEventDoubleClick {
-				s.scheduleClearLocked(client, "done")
-			}
-			listPage := isAgentList(s.agentIconState)
-			projectPage := s.agentIconState == "projects"
-			key := ""
-			if event.ItemIndex >= 0 && event.ItemIndex < len(s.displayedListKeys) {
-				key = s.displayedListKeys[event.ItemIndex]
-			}
 			s.mu.Unlock()
-			// Dashboard launches also arrive after the native page has been closed.
-			if current && event.Kind == protocol.EvenHubEventMenu && event.PackageName == codexMenuPackage {
-				log.Printf("[codex-menu] launch received; refreshing list")
-				s.monitor.openSessionList()
-				continue
-			}
-			if current && event.Kind == protocol.EvenHubEventSystem && (event.Type == protocol.EvenHubEventForegroundExit || event.Type == protocol.EvenHubEventSystemExit || event.Type == protocol.EvenHubEventAbnormalExit) {
-				s.mu.Lock()
-				s.monitor.dismissDisplay()
-				s.stopLoadingLocked()
-				s.cancelDisplayTimerLocked()
-				s.agentPageActive = false
-				s.mu.Unlock()
-				continue
-			}
-			if !active {
-				continue
-			}
-			if event.Kind != protocol.EvenHubEventSystem && event.Name != streamContainerName {
-				continue
-			}
-			if event.Type == protocol.EvenHubEventDoubleClick {
-				if projectPage {
-					s.monitor.dismissDisplay()
-					if err := s.ClearDisplay(); err != nil {
-						s.mu.Lock()
-						s.recordConnectionErrorLocked(err)
-						s.mu.Unlock()
-					}
-				} else {
-					s.monitor.handleInput(event.Type)
+			if current && ctx.Err() == nil {
+				if s.mediaApp != nil && event.Kind == protocol.EvenHubEventMenu && event.PackageName != mediaapp.PackageName {
+					s.mediaApp.Cancel()
 				}
-			} else if listPage && event.Kind == protocol.EvenHubEventList && event.Type == protocol.EvenHubEventClick && key != "" {
-				s.monitor.selectListItem(key)
+				s.miniapps.Dispatch(event)
 			}
 		}
 	}()
@@ -672,13 +667,24 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 			s.mu.Lock()
 			if s.client == client {
 				becameReady := status.Ready && !s.clientStatus.Ready
+				if s.clientStatus.Ready && !status.Ready {
+					log.Printf("[glasses-status] lost readiness left=%s right=%s", status.Left, status.Right)
+				}
 				s.clientStatus = status
+				if !status.Ready && s.mediaApp != nil {
+					s.mediaApp.Cancel()
+				}
 				reconnecting := status.Left == g2.Reconnecting || status.Right == g2.Reconnecting
 				if reconnecting && !s.wasReconnecting {
 					s.reconnectCount++
+					log.Printf("[glasses-status] reconnecting left=%s right=%s", status.Left, status.Right)
 				}
 				s.wasReconnecting = reconnecting
 				if becameReady {
+					if err := client.SetMenu(ctx, s.visibleMiniAppMenuLocked()); err != nil {
+						s.recordConnectionErrorLocked(fmt.Errorf("同步 miniapp 菜单失败: %w", err))
+					}
+					log.Printf("[glasses-status] ready left=%s right=%s", status.Left, status.Right)
 					if !s.monitor.displayDismissed() {
 						s.monitor.resumeDisplay()
 					}
@@ -697,6 +703,7 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 				if !ok {
 					return
 				}
+				log.Printf("[glasses-error] %v", err)
 				s.mu.Lock()
 				if s.client == client {
 					s.recordConnectionErrorLocked(err)
@@ -705,6 +712,66 @@ func (s *EvenService) startEventSubscriptionLocked(client *g2.Client) {
 			}
 		}
 	}()
+}
+
+func (s *EvenService) openCodexMiniApp() {
+	log.Printf("[codex-menu] launch received; refreshing list")
+	s.monitor.openSessionList()
+}
+
+// handleCodexMiniAppEvent is the host adapter for the Codex miniapp. The
+// miniapp owns event selection; this adapter owns the existing monitor and the
+// serialized display state that must remain beside the BLE client.
+func (s *EvenService) handleCodexMiniAppEvent(event protocol.EvenHubEvent) bool {
+	s.mu.Lock()
+	client := s.client
+	active := client != nil && s.agentPageActive
+	if !active {
+		s.mu.Unlock()
+		return false
+	}
+	if s.agentIconState == "done" && event.Type >= protocol.EvenHubEventClick && event.Type <= protocol.EvenHubEventDoubleClick {
+		s.scheduleClearLocked(client, "done")
+	}
+	listPage := isAgentList(s.agentIconState)
+	projectPage := s.agentIconState == "projects"
+	key := ""
+	if event.ItemIndex >= 0 && event.ItemIndex < len(s.displayedListKeys) {
+		key = s.displayedListKeys[event.ItemIndex]
+	}
+
+	if event.Kind == protocol.EvenHubEventSystem && (event.Type == protocol.EvenHubEventForegroundExit || event.Type == protocol.EvenHubEventSystemExit || event.Type == protocol.EvenHubEventAbnormalExit) {
+		s.monitor.dismissDisplay()
+		s.stopLoadingLocked()
+		s.cancelDisplayTimerLocked()
+		s.agentPageActive = false
+		s.flushPendingNotificationsLocked()
+		s.mu.Unlock()
+		return true
+	}
+	s.mu.Unlock()
+
+	if event.Kind != protocol.EvenHubEventSystem && event.Name != streamContainerName {
+		return false
+	}
+	if event.Type == protocol.EvenHubEventDoubleClick {
+		if projectPage {
+			s.monitor.dismissDisplay()
+			if err := s.ClearDisplay(); err != nil {
+				s.mu.Lock()
+				s.recordConnectionErrorLocked(err)
+				s.mu.Unlock()
+			}
+		} else {
+			s.monitor.handleInput(event.Type)
+		}
+		return true
+	}
+	if listPage && event.Kind == protocol.EvenHubEventList && event.Type == protocol.EvenHubEventClick && key != "" {
+		s.monitor.selectListItem(key)
+		return true
+	}
+	return false
 }
 
 func (s *EvenService) recordConnectionErrorLocked(err error) {
@@ -803,6 +870,9 @@ func (s *EvenService) ClearDashboardSchedule(experimental bool) error {
 }
 
 func (s *EvenService) stopSubscriptionsLocked() {
+	if s.mediaApp != nil {
+		s.mediaApp.Cancel()
+	}
 	if s.subscriptionCancel != nil {
 		s.subscriptionCancel()
 		s.subscriptionCancel = nil
@@ -883,6 +953,9 @@ func (s *EvenService) ShowImage(encoded string) error {
 // ClearDisplay closes the active native page without switching to teleprompter mode.
 func (s *EvenService) ClearDisplay() error {
 	return s.withClient(func(client *g2.Client) error {
+		if s.mediaApp != nil {
+			s.mediaApp.Cancel()
+		}
 		s.displayGeneration++
 		s.cancelDisplayTimerLocked()
 		s.stopLoadingLocked()
@@ -893,6 +966,7 @@ func (s *EvenService) ClearDisplay() error {
 		s.agentIconState = ""
 		s.monitor.ClearRows()
 		s.simulator.setPage(" ", blankAgentPageStyle(), nil)
+		s.flushPendingNotificationsLocked()
 		return nil
 	})
 }
@@ -914,6 +988,9 @@ func (s *EvenService) ShowList(rows []string) error {
 
 func (s *EvenService) withDisplayClient(operation func(*g2.Client) error) error {
 	return s.withClient(func(client *g2.Client) error {
+		if s.mediaApp != nil {
+			s.mediaApp.Cancel()
+		}
 		if err := operation(client); err != nil {
 			s.recordConnectionErrorLocked(fmt.Errorf("眼镜显示失败: %w", err))
 			return err
@@ -952,6 +1029,10 @@ func (s *EvenService) statusLocked() DeviceStatus {
 	}
 	status := s.clientStatus
 	capabilities := status.Capabilities
+	var lastEvent DeviceEvent
+	if event := s.lastEvent.Load(); event != nil {
+		lastEvent = *event
+	}
 	return DeviceStatus{
 		Connected:              status.Ready,
 		Connecting:             !status.Ready,
@@ -969,7 +1050,7 @@ func (s *EvenService) statusLocked() DeviceStatus {
 		AudioActive:            s.audioActive,
 		AudioFrames:            s.audioFrames.Load(),
 		AudioBytes:             s.audioBytes.Load(),
-		LastEvent:              s.lastEvent,
+		LastEvent:              lastEvent,
 		Capabilities: DeviceCapabilities{
 			Text: capabilities.Text, NativeText: capabilities.NativeText,
 			NativeList: capabilities.NativeList, Image: capabilities.Image,
@@ -1044,8 +1125,6 @@ func (s *EvenService) cancelDisplayTimerLocked() {
 // streamContainerName is the native list container mirrored to the glasses.
 // Every push rebuilds the same container, so the row count can change between
 // pushes without any create/destroy churn on the device.
-const streamContainerName = "agent-stream"
-
 // LensCalibration pushes the self-describing calibration list and returns it, so
 // the desktop can show the same rows.
 //

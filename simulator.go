@@ -21,12 +21,13 @@ import (
 // embedded preview. It contains the exact text, geometry and BMP bytes sent to
 // G2, so the desktop does not need a second native simulator process.
 type simulatorPage struct {
-	List    *simulatorList `json:"list,omitempty"`
-	Info    *simulatorText `json:"info,omitempty"`
-	Text    string         `json:"text"`
-	Style   g2.TextStyle   `json:"style"`
-	Icon    *g2.StatusIcon `json:"icon"`
-	Divider *g2.StatusIcon `json:"divider,omitempty"`
+	List     *simulatorList  `json:"list,omitempty"`
+	Info     *simulatorText  `json:"info,omitempty"`
+	Text     string          `json:"text"`
+	Style    g2.TextStyle    `json:"style"`
+	Icon     *g2.StatusIcon  `json:"icon"`
+	Divider  *g2.StatusIcon  `json:"divider,omitempty"`
+	Overlays []g2.StatusIcon `json:"overlays,omitempty"`
 }
 
 type officialSimulator struct {
@@ -116,6 +117,18 @@ func (s *officialSimulator) setPage(text string, style g2.TextStyle, icon *g2.St
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.page = simulatorPage{Text: text, Style: style, Icon: icon}
+}
+
+func (s *officialSimulator) setMediaPage(text string, cover, lyric g2.StatusIcon) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.page = simulatorPage{
+		Text: text, Style: mediaPageStyle,
+		Icon: &cover, Divider: &mediaPageDivider,
+	}
+	if len(lyric.BMP) > 0 {
+		s.page.Overlays = append(s.page.Overlays, lyric)
+	}
 }
 
 func (s *officialSimulator) setText(text string) {

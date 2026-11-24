@@ -1,200 +1,546 @@
-/*
- * The Even Realities look, taken from `even-toolkit` rather than re-typed.
- *
- * The library ships its palette as plain CSS custom properties (--color-text,
- * --color-surface, ...), which happens to be exactly the namespace Tailwind v4
- * uses for colour utilities. Three things are needed to turn that into a
- * working, switchable theme.
- *
- * 1. SOURCE SCAN
- *    Tailwind resolves `bg-surface` / `text-text-dim` from the classes it can
- *    find in the tree, and it skips node_modules by default. The @source rules
- *    below put the component library back in scope — without them its own
- *    classes compile to nothing and every component renders unstyled.
- *
- * 2. ALIASES
- *    @theme cannot read a var of the same name, so each token is aliased
- *    through --ev-* first. The alias is a var() reference, not a copy, so the
- *    active theme still decides the value at runtime. That indirection is what
- *    lets one dark override below change every utility at once.
- *
- * 3. THEME ATTRIBUTE
- *    data-theme must sit on <html>. The aliases are declared on :root, where
- *    nested var() references are substituted, so a theme attribute on some
- *    inner element would resolve them to the light palette.
- */
 @import "tailwindcss";
-@import "even-toolkit/web/theme-light.css";
-@import "even-toolkit/web/typography.css";
-@import "even-toolkit/web/utilities.css";
-
+@import "@radix-ui/themes/styles.css";
 @source "./**/*.{ts,tsx}";
-@source "../node_modules/even-toolkit/dist/web";
-
 @theme inline {
-  --color-bg: var(--ev-bg);
-  --color-surface: var(--ev-surface);
-  --color-surface-light: var(--ev-surface-light);
-  --color-surface-lighter: var(--ev-surface-lighter);
-  --color-border: var(--ev-border);
-  --color-border-light: var(--ev-border-light);
-  --color-text: var(--ev-text);
-  --color-text-dim: var(--ev-text-dim);
-  --color-text-muted: var(--ev-text-muted);
-  --color-text-highlight: var(--ev-text-highlight);
-  --color-accent: var(--ev-accent);
-  --color-accent-alpha: var(--ev-accent-alpha);
-  --color-accent-warning: var(--ev-accent-warning);
-  --color-positive: var(--ev-positive);
-  --color-positive-alpha: var(--ev-positive-alpha);
-  --color-negative: var(--ev-negative);
-  --color-negative-alpha: var(--ev-negative-alpha);
-  --color-overlay: var(--ev-overlay);
-  --color-input-bg: var(--ev-input-bg);
+  --color-bg: var(--app-bg);
+  --color-surface: var(--app-surface);
+  --color-surface-light: var(--app-subtle);
+  --color-border: var(--app-border);
+  --color-text: var(--app-text);
+  --color-text-dim: var(--app-dim);
+  --color-text-muted: var(--app-muted);
+  --color-positive: #21846a;
+  --color-positive-alpha: #21846a18;
+  --color-negative: #c74549;
+  --color-negative-alpha: #c7454910;
+  --color-input-bg: var(--app-subtle);
+  --text-detail: 11px;
+  --text-subtitle: 13px;
+  --text-normal-title: 14px;
+  --text-normal-body: 13px;
 }
-
-/* Light is the library's own palette, imported above; the aliases just point at
-   it. Nothing is restated, so a token update in even-toolkit lands here too. */
 :root {
-  --ev-bg: var(--color-bg);
-  --ev-surface: var(--color-surface);
-  --ev-surface-light: var(--color-surface-light);
-  --ev-surface-lighter: var(--color-surface-lighter);
-  --ev-border: var(--color-border);
-  --ev-border-light: var(--color-border-light);
-  --ev-text: var(--color-text);
-  --ev-text-dim: var(--color-text-dim);
-  --ev-text-muted: var(--color-text-muted);
-  --ev-text-highlight: var(--color-text-highlight);
-  --ev-accent: var(--color-accent);
-  --ev-accent-alpha: var(--color-accent-alpha);
-  --ev-accent-warning: var(--color-accent-warning);
-  --ev-positive: var(--color-positive);
-  --ev-positive-alpha: var(--color-positive-alpha);
-  --ev-negative: var(--color-negative);
-  --ev-negative-alpha: var(--color-negative-alpha);
-  --ev-overlay: var(--color-overlay);
-  --ev-input-bg: var(--color-input-bg);
+  --app-bg: #edf2f1;
+  --app-surface: #ffffffb8;
+  --app-subtle: #728b9010;
+  --app-border: #64808225;
+  --app-text: #213536;
+  --app-dim: #637677;
+  --app-muted: #728487;
+  --glass: #ffffff6e;
+  --glass-edge: #ffffffc9;
+  --card-shadow: 0 3px 16px #304e5205, inset 0 1px 0 #ffffffb3;
+  --color-border: var(--app-border);
+  --color-surface-light: var(--app-subtle);
+  --color-text: var(--app-text);
+  --color-text-muted: var(--app-muted);
+  --color-text-dim: var(--app-dim);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-
-/*
- * Dark is the one palette that has to be restated. even-toolkit ships it as
- * `theme-dark.css`, but that file targets :root, and CSS has no way to scope an
- * @import to a selector — importing it would simply overwrite the light values
- * for every user. The values below are that file verbatim, with one fix.
- *
- * THE FIX: the library's dark preset sets --color-accent to #FFFFFF and leaves
- * --color-text-highlight at #FFFFFF too. Every `highlight` button is
- * `bg-accent text-text-highlight`, so on dark it would render white on white —
- * the primary action would be invisible. In dark, text-highlight has to be the
- * page colour instead of white.
- */
 :root[data-theme="dark"] {
-  --color-text: #f0ebe3;
-  --color-text-dim: #8a7f72;
-  --color-text-muted: #5c5347;
-  --color-text-highlight: #0c0a07;
-
-  --color-bg: #0c0a07;
-  --color-surface: #161310;
-  --color-surface-light: #201c17;
-  --color-surface-lighter: #2c2620;
-
-  --color-border: #28221a;
-  --color-border-light: #3a3228;
-
-  --color-accent: #ffffff;
-  --color-accent-alpha: rgba(255, 255, 255, 0.12);
-  --color-accent-warning: #fef991;
-
-  --color-positive: #26a69a;
-  --color-positive-alpha: rgba(38, 166, 154, 0.5);
-  --color-negative: #ef5350;
-  --color-negative-alpha: rgba(239, 83, 80, 0.15);
-
-  --color-overlay: rgba(0, 0, 0, 0.6);
-  --color-input-bg: rgba(255, 255, 255, 0.08);
+  color-scheme: dark;
+  --app-bg: #151e22;
+  --app-surface: #253137c9;
+  --app-subtle: #b4d2db0a;
+  --app-border: #c5e2e518;
+  --app-text: #e5eeed;
+  --app-dim: #a4b8ba;
+  --app-muted: #8da4a7;
+  --glass: #22323999;
+  --glass-edge: #daf8ff1c;
+  --card-shadow: 0 3px 16px #0000000a, inset 0 1px 0 #ffffff08;
 }
-
 html,
 body,
 #root {
   height: 100%;
 }
-
 body {
   margin: 0;
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-family: var(--font-body);
+  color: var(--app-text);
+  background: var(--app-bg);
   -webkit-font-smoothing: antialiased;
 }
-
-.display-adjustment-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 56px;
-  align-items: center;
-  gap: 16px;
-  min-height: 150px;
-  padding: 16px;
-  border-radius: 10px;
-  background: var(--color-surface-light);
+button,
+input,
+textarea,
+select {
+  font: inherit;
 }
-
-.display-adjustment-stage {
-  position: relative;
-  height: 116px;
+button {
+  cursor: pointer;
 }
-
-.display-volume {
-  position: absolute;
-  inset: 18px 14% 20px;
-  border: 1px dashed var(--color-text-muted);
-  transform: skewY(12deg);
+button:disabled {
+  cursor: default;
 }
-
-.display-volume.back { transform: translate(18px, -12px) skewY(-12deg); }
-.display-plane {
-  position: absolute;
-  left: 35%;
-  top: 28px;
-  width: 42%;
-  height: 66px;
-  border: 1px solid var(--color-text-dim);
-  background: rgba(254, 249, 145, 0.78);
-  transform: skewY(12deg);
+button:focus-visible,
+select:focus-visible,
+input[type="range"]:focus-visible {
+  outline: 2px solid #399a87;
+  outline-offset: 4px;
 }
-
-.vertical-control {
+.desktop-theme {
+  height: 100%;
+  min-height: 0;
+  --default-font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  background: transparent;
+}
+.desktop-shell {
+  display: flex;
+  height: 100dvh;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 0 0, #b2d8d640, transparent 50%),
+    radial-gradient(ellipse at 100% 100%, #bfc9ea26, transparent 55%),
+    var(--app-bg);
+}
+.desktop-sidebar {
+  width: 202px;
+  flex: 0 0 202px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  color: var(--color-text-dim);
+  padding: 0 16px 14px;
+  background: var(--glass);
+  border-right: 1px solid var(--glass-edge);
+  backdrop-filter: blur(36px) saturate(150%);
+  -webkit-backdrop-filter: blur(36px) saturate(150%);
 }
-
-.vertical-control-icon { font-size: 18px; color: var(--color-text); }
-.vertical-control strong { min-width: 36px; text-align: center; font-size: 11px; font-weight: 500; }
-.vertical-control input[type="range"] {
-  width: 92px;
-  accent-color: var(--color-text);
-  transform: rotate(-90deg);
-  margin: 38px -18px;
+.sidebar-drag {
+  height: 58px;
+  flex-shrink: 0;
 }
-
-.screen-position-controls {
+.brand {
   display: flex;
   align-items: center;
-  gap: 16px;
-  min-height: 112px;
-  padding: 12px 16px;
-  border-radius: 10px;
-  background: var(--color-surface-light);
+  gap: 11px;
+  padding: 12px 8px 28px;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -1px;
 }
-
-.screen-height-control { width: 42px; }
-.screen-height-control input[type="range"] { width: 72px; margin: 28px -14px; }
-
+.brand-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #faffffb3, #c7dfdc80);
+  border: 1px solid var(--glass-edge);
+  color: #38796b;
+  box-shadow: 0 4px 12px #214d4310;
+}
+.brand span:not(.brand-icon) {
+  display: block;
+  margin-top: 3px;
+  font-size: 8px;
+  letter-spacing: 1.7px;
+  color: var(--app-muted);
+  font-weight: 550;
+}
+.sidebar-label {
+  font-size: 10px;
+  color: var(--app-muted);
+  padding: 0 12px;
+  margin: 0 0 10px;
+}
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--app-dim);
+  background: transparent;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
+}
+.nav-item:hover {
+  background: var(--app-subtle);
+}
+.nav-item.active {
+  color: var(--app-text);
+  background: var(--app-surface);
+  border-color: var(--glass-edge);
+  box-shadow:
+    0 3px 10px #24433d08,
+    inset 0 1px 0 var(--glass-edge);
+  font-weight: 600;
+}
+.nav-item.active svg {
+  color: #399a87;
+}
+.nav-indicator {
+  margin-left: auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #399a87;
+}
+.sidebar-device {
+  margin-top: auto;
+  padding: 24px 10px 20px;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 7px;
+}
+.sidebar-device-icon {
+  color: var(--app-dim);
+  padding: 10px;
+}
+.sidebar-device strong {
+  font-size: 13px;
+  font-weight: 550;
+}
+.connection-caption,
+.battery-caption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--app-muted);
+}
+.sidebar-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--app-border);
+  padding: 15px 6px 0;
+  font-size: 10px;
+  color: var(--app-muted);
+}
+.desktop-workspace {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.workspace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--glass);
+  font-size: 11px;
+  color: var(--app-dim);
+}
+.toolbar-slash {
+  margin: 0 12px;
+  opacity: 0.4;
+}
+.connection-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--glass-edge);
+  background: var(--app-surface);
+  border-radius: 20px;
+  padding: 5px 10px;
+  font-size: 10px;
+}
+.status-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #99a6a7;
+}
+.status-dot.is-connected {
+  background: #36a885;
+  box-shadow: 0 0 0 3px #36a88513;
+}
+.workspace-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 30px 28px;
+}
+.workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 25px;
+}
+.eyebrow {
+  color: var(--app-muted);
+  font-size: 9px;
+  letter-spacing: 2px;
+  margin: 0 0 9px;
+}
+.workspace-heading h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -1px;
+  line-height: 1.4;
+}
+.workspace-heading p:last-child {
+  font-size: 12px;
+  color: var(--app-dim);
+  margin: 7px 0 0;
+}
+.heading-glasses {
+  color: var(--app-muted);
+  opacity: 0.45;
+  padding-right: 8px;
+}
+.workspace-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  gap: 22px;
+  align-items: start;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+.workspace-content {
+  min-width: 0;
+  animation: panel-enter 0.18s ease-out;
+}
+.desktop-card {
+  border: 1px solid var(--glass-edge);
+  border-radius: 17px;
+  background: var(--app-surface);
+  box-shadow: var(--card-shadow);
+  min-width: 0;
+}
+.panel-padding {
+  padding: 20px;
+}
+.desktop-card h2 {
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+.desktop-button {
+  font-weight: 500;
+  font-size: 12px;
+  border-radius: 9px;
+  min-height: 32px;
+}
+.icon-button {
+  width: 30px;
+  min-height: 30px;
+  padding: 5px;
+}
+.desktop-textarea {
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.desktop-divider {
+  border: 0;
+  border-top: 1px solid var(--app-border);
+}
+.preview-rail {
+  position: sticky;
+  top: 0;
+  min-width: 0;
+}
+.rail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1px 4px 13px;
+  color: var(--app-dim);
+  font-size: 11px;
+  font-weight: 550;
+}
+.live-label {
+  font-size: 8px;
+  letter-spacing: 1.1px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #399a87;
+}
+.live-label i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.preview-note {
+  display: flex;
+  gap: 9px;
+  color: var(--app-muted);
+  margin: 18px 7px;
+}
+.preview-note svg {
+  flex-shrink: 0;
+}
+.preview-note p {
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 0;
+}
+.preview-note span {
+  display: block;
+  font-size: 10px;
+  margin-top: 4px;
+  opacity: 0.85;
+}
+.workspace-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  min-height: 35px;
+  padding: 7px 26px;
+  background: var(--glass);
+  border-top: 1px solid var(--app-border);
+  color: var(--app-muted);
+  font-size: 10px;
+}
+.workspace-footer > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workspace-footer > span:last-child {
+  flex-shrink: 0;
+  font-size: 9px;
+}
+.footer-dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  background: #399a87;
+  border-radius: 50%;
+  margin-right: 7px;
+  vertical-align: middle;
+}
+.footer-dot.error {
+  background: #c74549;
+}
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (min-width: 1400px) {
+  .content-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .content-span {
+    grid-column: span 2;
+  }
+  .workspace-columns {
+    grid-template-columns: minmax(0, 1fr) 360px;
+  }
+}
+@media (max-width: 1100px) {
+  .desktop-sidebar {
+    width: 180px;
+    flex-basis: 180px;
+    padding-inline: 12px;
+  }
+  .workspace-scroll {
+    padding: 24px 20px;
+  }
+  .workspace-columns {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 16px;
+  }
+  .panel-padding {
+    padding: 17px;
+  }
+}
+@media (max-width: 920px) {
+  .workspace-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .preview-rail {
+    position: static;
+  }
+  .heading-glasses {
+    display: none;
+  }
+}
+@media (max-width: 620px) {
+  .desktop-shell {
+    flex-direction: column;
+  }
+  .desktop-sidebar {
+    flex: none;
+    width: 100%;
+    padding: 0 12px 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--glass-edge);
+  }
+  .sidebar-drag {
+    height: 42px;
+  }
+  .brand,
+  .sidebar-label,
+  .sidebar-device,
+  .sidebar-bottom {
+    display: none;
+  }
+  .sidebar-nav {
+    flex-direction: row;
+    gap: 4px;
+  }
+  .nav-item {
+    flex: 1;
+    justify-content: center;
+    padding: 9px 4px;
+    font-size: 11px;
+    gap: 6px;
+  }
+  .nav-item svg {
+    width: 15px;
+  }
+  .nav-indicator {
+    display: none;
+  }
+  .workspace-toolbar {
+    min-height: 44px;
+    padding: 0 18px;
+  }
+  .desktop-workspace {
+    min-height: 0;
+  }
+  .workspace-scroll {
+    padding: 20px 14px;
+  }
+  .workspace-heading h1 {
+    font-size: 25px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .desktop-sidebar,
+  .workspace-toolbar,
+  .workspace-footer,
+  .desktop-card {
+    background: var(--app-bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
 /* The window has a hidden inset title bar, so the shell's top strip is the
    window's drag handle. Interactive children opt back out. */
 .window-drag {
@@ -277,11 +623,7 @@ body {
 }
 
 /* ---------------------------------------------------------------- 折叠预览 */
-/*
- * The preview card is folded by default, so the header strip is the whole card
- * most of the time. It stays clickable edge to edge, and the chevron is the only
- * affordance that costs nothing when the card is shut.
- */
+/* 预览头部保留折叠操作。 */
 .lens-fold-head {
   display: flex;
   align-items: center;
@@ -379,4 +721,272 @@ body {
   line-height: 19px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* 侧栏预览继续使用实际发送的容器与位图。 */
+.preview-rail .lens-fold-head {
+  padding: 14px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.preview-rail .lens-fold-head .flex-1 {
+  flex-basis: 150px;
+}
+.preview-rail .lens-fold-head .text-normal-title {
+  font-size: 12px;
+}
+.preview-rail .lens-fold-body {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 12px;
+  gap: 18px;
+}
+.preview-rail .lens-simulator-toolbar {
+  height: auto;
+  min-height: 32px;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+}
+.preview-rail .lens-simulator-toolbar > span:first-child {
+  display: none;
+}
+.preview-rail .lens-simulator-actions {
+  width: 100%;
+  justify-content: space-between;
+  font-size: 8px;
+}
+.preview-rail .lens-rows {
+  max-height: 250px;
+}
+.preview-rail .lens-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* 常用操作优先显示，技术信息通过原生折叠区域查看。 */
+.compact-details {
+  font-size: 12px;
+  color: var(--app-dim);
+}
+.compact-details > summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-size: 11px;
+  color: var(--app-dim);
+}
+.compact-details[open] > summary {
+  margin-bottom: 8px;
+}
+.quick-actions {
+  display: flex;
+  flex-direction: column;
+}
+.quick-actions button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: transparent;
+  color: var(--app-text);
+  border: 0;
+  border-radius: 10px;
+  text-align: left;
+  padding: 13px 8px;
+}
+.quick-actions button + button {
+  border-top: 1px solid var(--app-border);
+}
+.quick-actions button:hover {
+  background: var(--app-subtle);
+}
+.quick-actions button:disabled {
+  opacity: 0.45;
+}
+.quick-actions button > svg:first-child {
+  color: #399a87;
+}
+.quick-actions button > svg:last-child {
+  margin-left: auto;
+  color: var(--app-muted);
+}
+.quick-actions button span {
+  font-size: 13px;
+  font-weight: 550;
+}
+.quick-actions small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--app-muted);
+}
+.composer-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 14px;
+  padding: 10px 0;
+}
+.composer-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--app-border);
+}
+.composer-footer > button:first-child {
+  min-width: 130px;
+}
+.image-picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 230px;
+  border: 1px dashed var(--app-border);
+  border-radius: 12px;
+  padding: 22px;
+  cursor: pointer;
+  color: var(--app-dim);
+  background: var(--app-subtle);
+  text-align: center;
+}
+.image-picker input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.image-picker:focus-within {
+  outline: 2px solid #399a87;
+  outline-offset: 3px;
+}
+.image-picker img {
+  max-height: 170px;
+  max-width: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.image-picker strong {
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.image-picker span {
+  font-size: 11px;
+}
+.setting-inline,
+.setting-inline > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.setting-inline {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.setting-inline > div {
+  flex-wrap: wrap;
+}
+.range-setting {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 0;
+}
+.range-setting input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  accent-color: #399a87;
+  cursor: pointer;
+}
+.range-setting span {
+  width: 40px;
+  text-align: right;
+  color: var(--app-dim);
+  font-size: 12px;
+}
+.range-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--app-dim);
+}
+.preview-caption {
+  text-align: center;
+  font-size: 10px;
+  color: var(--app-muted);
+  margin: 12px 0;
+}
+.workspace-heading {
+  margin-bottom: 20px;
+}
+.workspace-heading h1 {
+  font-size: 24px;
+}
+
+@media (min-width: 1100px) {
+  .quick-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .quick-actions button {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+  }
+  .quick-actions button + button {
+    border-top: 0;
+    border-left: 1px solid var(--app-border);
+  }
+  .quick-actions button > svg:last-child {
+    display: none;
+  }
+  .quick-actions small {
+    font-size: 10px;
+  }
+}
+
+.developer-options > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--app-dim);
+}
+.developer-options > summary::after {
+  content: "+";
+  margin-left: auto;
+}
+.developer-options[open] > summary::after {
+  content: "−";
+}
+.developer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0;
+}
+@media (min-width: 1100px) {
+  .consumer-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
